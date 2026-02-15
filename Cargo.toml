@@ -23,7 +23,7 @@ colored = "2"
 csv = "1"
 git2 = "0.19"
 glob = "0.3"
-pulldown-cmark = "0.12"
+markdown = "1"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

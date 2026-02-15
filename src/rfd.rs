@@ -112,37 +112,53 @@ impl Rfd {
     }
 }
 
-/// Parse YAML frontmatter from markdown content.
+/// Parse YAML frontmatter from markdown content using markdown-rs.
 /// Returns (frontmatter, body_after_frontmatter).
 fn parse_frontmatter(content: &str) -> Result<(Frontmatter, String)> {
     let content = content.trim_start_matches('\u{feff}'); // strip BOM
 
-    if !content.starts_with("---") {
-        anyhow::bail!("missing YAML frontmatter (file must start with ---)");
-    }
+    let options = markdown::ParseOptions {
+        constructs: markdown::Constructs {
+            frontmatter: true,
+            ..markdown::Constructs::default()
+        },
+        ..markdown::ParseOptions::default()
+    };
 
-    // Find the closing ---
-    let after_first = &content[3..];
-    let end = after_first
-        .find("\n---")
-        .ok_or_else(|| anyhow::anyhow!("unterminated frontmatter (no closing ---)"))?;
+    let ast = markdown::to_mdast(content, &options)
+        .map_err(|msg| anyhow::anyhow!("markdown parse error: {}", msg))?;
 
-    let yaml = &after_first[..end].trim();
-    let body_start = 3 + end + 4; // skip opening --- + yaml + \n---
-    let body = if body_start < content.len() {
-        // Skip optional newline after closing ---
-        let rest = &content[body_start..];
-        if let Some(stripped) = rest.strip_prefix('\n') {
+    // Extract the Yaml node from root children
+    let root = match &ast {
+        markdown::mdast::Node::Root(root) => root,
+        _ => anyhow::bail!("unexpected AST root node"),
+    };
+
+    let yaml_node = root.children.iter().find_map(|node| {
+        if let markdown::mdast::Node::Yaml(yaml) = node {
+            Some(yaml)
+        } else {
+            None
+        }
+    });
+
+    let yaml = yaml_node
+        .ok_or_else(|| anyhow::anyhow!("missing YAML frontmatter (file must start with ---)"))?;
+
+    let frontmatter: Frontmatter =
+        serde_yaml::from_str(&yaml.value).context("invalid YAML frontmatter")?;
+
+    // Body is everything after the frontmatter block
+    let body = if let Some(pos) = &yaml.position {
+        let after = &content[pos.end.offset..];
+        if let Some(stripped) = after.strip_prefix('\n') {
             stripped.to_string()
         } else {
-            rest.to_string()
+            after.to_string()
         }
     } else {
         String::new()
     };
-
-    let frontmatter: Frontmatter =
-        serde_yaml::from_str(yaml).context("invalid YAML frontmatter")?;
 
     Ok((frontmatter, body))
 }
