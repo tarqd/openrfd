@@ -79,14 +79,14 @@ impl Rfd {
     }
 
     /// Get the full markdown content (frontmatter + body).
-    pub fn to_string(&self) -> String {
+    pub fn to_content(&self) -> String {
         let yaml = serde_yaml::to_string(&self.frontmatter).unwrap_or_default();
         format!("---\n{}---\n{}", yaml, self.body)
     }
 
     /// Write the RFD back to disk.
     pub fn save(&self) -> Result<()> {
-        let content = self.to_string();
+        let content = self.to_content();
         std::fs::write(&self.path, &content)
             .with_context(|| format!("writing {}", self.path.display()))?;
         Ok(())
@@ -132,8 +132,8 @@ fn parse_frontmatter(content: &str) -> Result<(Frontmatter, String)> {
     let body = if body_start < content.len() {
         // Skip optional newline after closing ---
         let rest = &content[body_start..];
-        if rest.starts_with('\n') {
-            rest[1..].to_string()
+        if let Some(stripped) = rest.strip_prefix('\n') {
+            stripped.to_string()
         } else {
             rest.to_string()
         }

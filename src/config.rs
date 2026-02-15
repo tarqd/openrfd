@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Repository-level configuration stored in `rfd.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub rfd: RfdConfig,
@@ -56,15 +56,6 @@ impl Default for RfdConfig {
             default_format: default_format(),
             main_branch: default_main_branch(),
             pad_width: default_pad_width(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            rfd: RfdConfig::default(),
-            github: GithubConfig::default(),
         }
     }
 }

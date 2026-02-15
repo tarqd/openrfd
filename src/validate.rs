@@ -176,16 +176,16 @@ pub fn check_annotations(repo_root: &Path, config: &Config, rfd_number: u32) -> 
 
     eprintln!("Annotation health for RFD {}:", padded);
     if live > 0 {
-        eprintln!("  {} {}", format!("{}", live).green(), "live");
+        eprintln!("  {} live", format!("{}", live).green());
     }
     if approximate > 0 {
-        eprintln!("  {} {}", format!("{}", approximate).yellow(), "approximate");
+        eprintln!("  {} approximate", format!("{}", approximate).yellow());
     }
     if stale > 0 {
-        eprintln!("  {} {}", format!("{}", stale).yellow(), "stale");
+        eprintln!("  {} stale", format!("{}", stale).yellow());
     }
     if orphaned > 0 {
-        eprintln!("  {} {}", format!("{}", orphaned).red(), "orphaned");
+        eprintln!("  {} orphaned", format!("{}", orphaned).red());
     }
     if live + approximate + stale + orphaned == 0 {
         eprintln!("  (no annotations)");

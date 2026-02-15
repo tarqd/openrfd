@@ -68,18 +68,13 @@ impl FromStr for State {
 }
 
 /// RFD visibility levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Visibility {
     Public,
+    #[default]
     Internal,
     Confidential,
-}
-
-impl Default for Visibility {
-    fn default() -> Self {
-        Visibility::Internal
-    }
 }
 
 impl Visibility {

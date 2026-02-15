@@ -135,9 +135,7 @@ fn strip_markdown(md: &str) -> String {
         if trimmed.starts_with('#') {
             let text = trimmed.trim_start_matches('#').trim();
             out.push_str(text);
-        } else if trimmed.starts_with("```") {
-            continue;
-        } else if trimmed.starts_with("---") {
+        } else if trimmed.starts_with("```") || trimmed.starts_with("---") {
             continue;
         } else {
             out.push_str(trimmed);

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_command(command: Commands, repo_root: &PathBuf, config: &Config) -> Result<()> {
+fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<()> {
     match command {
         Commands::New { title } => cmd_new(repo_root, config, &title),
         Commands::List { state, label } => cmd_list(repo_root, config, state.as_deref(), label.as_deref()),
@@ -290,7 +290,7 @@ What other approaches were considered? Why were they not chosen?
     Ok(())
 }
 
-fn cmd_new(repo_root: &PathBuf, config: &Config, title: &str) -> Result<()> {
+fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
     let num = next_rfd_number(repo_root);
     let padded = config.pad_number(num);
     let branch = config.branch_name(num);
@@ -356,11 +356,11 @@ fn cmd_new(repo_root: &PathBuf, config: &Config, title: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_list(repo_root: &PathBuf, config: &Config, state_filter: Option<&str>, label_filter: Option<&str>) -> Result<()> {
+fn cmd_list(repo_root: &Path, config: &Config, state_filter: Option<&str>, label_filter: Option<&str>) -> Result<()> {
     let rfd_dir = config.rfd_dir(repo_root);
 
     let state_filter = state_filter
-        .map(|s| State::from_str(s))
+        .map(State::from_str)
         .transpose()?;
 
     println!(
@@ -370,7 +370,7 @@ fn cmd_list(repo_root: &PathBuf, config: &Config, state_filter: Option<&str>, la
         "VISIBILITY".bold(),
         "TITLE".bold()
     );
-    println!("{:<6}  {:<15}  {:<12}  {}", "---", "-----", "----------", "-----");
+    println!("{:<6}  {:<15}  {:<12}  -----", "---", "-----", "----------");
 
     let mut entries: Vec<_> = std::fs::read_dir(&rfd_dir)?
         .filter_map(|e| e.ok())
@@ -431,7 +431,7 @@ fn cmd_list(repo_root: &PathBuf, config: &Config, state_filter: Option<&str>, la
     Ok(())
 }
 
-fn cmd_show(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> {
+fn cmd_show(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
     let dir = config.rfd_path(repo_root, number);
     let file = find_rfd_file(&dir)
         .ok_or_else(|| anyhow::anyhow!("RFD {} not found", number))?;
@@ -442,7 +442,7 @@ fn cmd_show(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> {
     Ok(())
 }
 
-fn cmd_edit(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> {
+fn cmd_edit(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
     let branch = config.branch_name(number);
 
     // Switch to RFD branch if it exists
@@ -469,7 +469,7 @@ fn cmd_edit(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> {
     Ok(())
 }
 
-fn cmd_state(repo_root: &PathBuf, config: &Config, number: u32, new_state: &str) -> Result<()> {
+fn cmd_state(repo_root: &Path, config: &Config, number: u32, new_state: &str) -> Result<()> {
     let new_state = State::from_str(new_state)?;
     let padded = config.pad_number(number);
     let dir = config.rfd_path(repo_root, number);
@@ -506,7 +506,7 @@ fn cmd_state(repo_root: &PathBuf, config: &Config, number: u32, new_state: &str)
     Ok(())
 }
 
-fn cmd_discuss(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> {
+fn cmd_discuss(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
     let padded = config.pad_number(number);
     let branch = config.branch_name(number);
 
@@ -646,7 +646,7 @@ fn cmd_discuss(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> 
     Ok(())
 }
 
-fn cmd_publish(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> {
+fn cmd_publish(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
     let padded = config.pad_number(number);
     let branch = config.branch_name(number);
 
@@ -697,7 +697,7 @@ fn cmd_publish(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> 
     Ok(())
 }
 
-fn cmd_search(repo_root: &PathBuf, config: &Config, query: &str) -> Result<()> {
+fn cmd_search(repo_root: &Path, config: &Config, query: &str) -> Result<()> {
     eprintln!("Searching RFDs for: {}", query);
     eprintln!();
 
@@ -724,7 +724,7 @@ fn cmd_search(repo_root: &PathBuf, config: &Config, query: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_validate(repo_root: &PathBuf, config: &Config, number: Option<u32>) -> Result<()> {
+fn cmd_validate(repo_root: &Path, config: &Config, number: Option<u32>) -> Result<()> {
     if let Some(num) = number {
         let padded = config.pad_number(num);
         let dir = config.rfd_path(repo_root, num);
@@ -756,12 +756,12 @@ fn cmd_validate(repo_root: &PathBuf, config: &Config, number: Option<u32>) -> Re
     Ok(())
 }
 
-fn cmd_index(repo_root: &PathBuf, config: &Config) -> Result<()> {
+fn cmd_index(repo_root: &Path, config: &Config) -> Result<()> {
     index::generate_csv_index(repo_root, config)
 }
 
 fn cmd_annotate(
-    repo_root: &PathBuf,
+    repo_root: &Path,
     config: &Config,
     number: u32,
     quote: &str,
@@ -868,7 +868,7 @@ fn cmd_annotate(
 }
 
 fn cmd_annotations(
-    repo_root: &PathBuf,
+    repo_root: &Path,
     config: &Config,
     number: u32,
     check: bool,
@@ -937,7 +937,7 @@ fn cmd_annotations(
 }
 
 fn cmd_import_annotations(
-    repo_root: &PathBuf,
+    repo_root: &Path,
     config: &Config,
     number: u32,
     pr: u32,
@@ -948,7 +948,7 @@ fn cmd_import_annotations(
 }
 
 fn cmd_resolve(
-    repo_root: &PathBuf,
+    repo_root: &Path,
     config: &Config,
     number: u32,
     annotation_id: &str,
@@ -986,7 +986,7 @@ fn cmd_resolve(
 }
 
 fn cmd_config(
-    repo_root: &PathBuf,
+    repo_root: &Path,
     config: &Config,
     key: Option<String>,
     value: Option<String>,
@@ -1057,7 +1057,7 @@ fn whoami() -> Option<String> {
         })
 }
 
-fn git_email(repo_root: &PathBuf) -> Option<String> {
+fn git_email(repo_root: &Path) -> Option<String> {
     std::process::Command::new("git")
         .current_dir(repo_root)
         .args(["config", "user.email"])
