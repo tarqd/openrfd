@@ -193,3 +193,76 @@ pub fn check_annotations(repo_root: &Path, config: &Config, rfd_number: u32) -> 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_rfd(dir: &std::path::Path, content: &str) -> std::path::PathBuf {
+        let path = dir.join("README.md");
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_validate_valid_rfd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rfd(
+            dir.path(),
+            "---\nauthors: Alice\nstate: discussion\ndiscussion: https://github.com/example/pr/1\n---\n\n# RFD 0001 Test\n\nContent here.\n",
+        );
+        let result = validate_rfd(&path);
+        assert!(result.is_ok());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_missing_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rfd(dir.path(), "# No frontmatter\n\nJust a heading.\n");
+        let result = validate_rfd(&path);
+        assert!(!result.is_ok());
+        assert!(result.errors[0].contains("missing YAML frontmatter"));
+    }
+
+    #[test]
+    fn test_validate_missing_authors_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rfd(
+            dir.path(),
+            "---\nstate: prediscussion\n---\n\n# RFD 0001 Test\n",
+        );
+        let result = validate_rfd(&path);
+        assert!(result.is_ok()); // warnings don't cause errors
+        assert!(result.warnings.iter().any(|w| w.contains("authors")));
+    }
+
+    #[test]
+    fn test_validate_missing_title_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rfd(
+            dir.path(),
+            "---\nauthors: Bob\nstate: prediscussion\n---\n\nNo heading here.\n",
+        );
+        let result = validate_rfd(&path);
+        assert!(result.warnings.iter().any(|w| w.contains("title")));
+    }
+
+    #[test]
+    fn test_validate_discussion_state_without_link_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rfd(
+            dir.path(),
+            "---\nauthors: Bob\nstate: discussion\n---\n\n# RFD 0001 Test\n",
+        );
+        let result = validate_rfd(&path);
+        assert!(result.warnings.iter().any(|w| w.contains("discussion")));
+    }
+
+    #[test]
+    fn test_validate_nonexistent_file() {
+        let result = validate_rfd(Path::new("/nonexistent/file.md"));
+        assert!(!result.is_ok());
+        assert!(result.errors[0].contains("cannot read file"));
+    }
+}

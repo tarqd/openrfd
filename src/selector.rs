@@ -198,4 +198,86 @@ mod tests {
         let result = match_text_quote(content, "xyz not here", None, None);
         assert_eq!(result.health, AnchorHealth::Orphaned);
     }
+
+    #[test]
+    fn test_fuzzy_match_approximate() {
+        let content = "This is a somewhat longer piece of text that can be fuzzy matched.";
+        // Change a few characters — LCS should still pass the 80% threshold
+        let result = match_text_quote(content, "somewhat longar piece of text that can be fuzzy", None, None);
+        assert_eq!(result.health, AnchorHealth::Approximate);
+        assert!(result.range.is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_too_short_skipped() {
+        let content = "Hello, world!";
+        // Fuzzy matching skips strings shorter than 10 chars
+        let result = match_text_quote(content, "xyz", None, None);
+        assert_eq!(result.health, AnchorHealth::Orphaned);
+    }
+
+    #[test]
+    fn test_multiple_matches_no_context_returns_first() {
+        let content = "foo bar foo bar foo";
+        let result = match_text_quote(content, "foo", None, None);
+        assert_eq!(result.health, AnchorHealth::Live);
+        assert_eq!(result.range, Some(0..3));
+    }
+
+    #[test]
+    fn test_check_selectors_text_quote_live() {
+        let selectors = vec![
+            Selector::TextQuoteSelector {
+                exact: "hello".into(),
+                prefix: None,
+                suffix: None,
+            },
+        ];
+        assert_eq!(check_selectors("say hello world", &selectors), AnchorHealth::Live);
+    }
+
+    #[test]
+    fn test_check_selectors_text_quote_orphaned() {
+        let selectors = vec![
+            Selector::TextQuoteSelector {
+                exact: "missing text".into(),
+                prefix: None,
+                suffix: None,
+            },
+        ];
+        assert_eq!(check_selectors("completely different", &selectors), AnchorHealth::Orphaned);
+    }
+
+    #[test]
+    fn test_check_selectors_position_only_is_stale() {
+        let content = "some content here";
+        let selectors = vec![
+            Selector::TextPositionSelector { start: 0, end: 4 },
+        ];
+        // No TextQuoteSelector to verify text, but position is in range
+        assert_eq!(check_selectors(content, &selectors), AnchorHealth::Stale);
+    }
+
+    #[test]
+    fn test_check_selectors_empty_is_orphaned() {
+        assert_eq!(check_selectors("any content", &[]), AnchorHealth::Orphaned);
+    }
+
+    #[test]
+    fn test_check_selectors_prefers_text_quote() {
+        let selectors = vec![
+            Selector::FragmentSelector {
+                value: "line=1,1".into(),
+                conforms_to: "http://tools.ietf.org/rfc/rfc5147".into(),
+            },
+            Selector::TextQuoteSelector {
+                exact: "hello".into(),
+                prefix: None,
+                suffix: None,
+            },
+            Selector::TextPositionSelector { start: 0, end: 5 },
+        ];
+        // TextQuoteSelector should be checked first
+        assert_eq!(check_selectors("hello world", &selectors), AnchorHealth::Live);
+    }
 }

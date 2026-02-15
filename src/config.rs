@@ -127,3 +127,98 @@ impl Config {
         format!("refs/rfd/{}", self.pad_number(num))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pad_number_default_width() {
+        let config = Config::default();
+        assert_eq!(config.pad_number(1), "0001");
+        assert_eq!(config.pad_number(42), "0042");
+        assert_eq!(config.pad_number(9999), "9999");
+        assert_eq!(config.pad_number(10000), "10000");
+    }
+
+    #[test]
+    fn test_pad_number_custom_width() {
+        let mut config = Config::default();
+        config.rfd.pad_width = 6;
+        assert_eq!(config.pad_number(1), "000001");
+        assert_eq!(config.pad_number(42), "000042");
+    }
+
+    #[test]
+    fn test_branch_name() {
+        let config = Config::default();
+        assert_eq!(config.branch_name(42), "rfd/0042");
+        assert_eq!(config.branch_name(1), "rfd/0001");
+    }
+
+    #[test]
+    fn test_ref_name() {
+        let config = Config::default();
+        assert_eq!(config.ref_name(42), "refs/rfd/0042");
+        assert_eq!(config.ref_name(1), "refs/rfd/0001");
+    }
+
+    #[test]
+    fn test_rfd_path() {
+        let config = Config::default();
+        let root = Path::new("/repo");
+        assert_eq!(config.rfd_path(root, 42), PathBuf::from("/repo/rfd/0042"));
+        assert_eq!(config.rfd_dir(root), PathBuf::from("/repo/rfd"));
+    }
+
+    #[test]
+    fn test_default_values() {
+        let config = Config::default();
+        assert_eq!(config.rfd.default_format, "md");
+        assert_eq!(config.rfd.main_branch, "main");
+        assert_eq!(config.rfd.pad_width, 4);
+        assert!(config.github.app_client_id.is_empty());
+        assert!(config.github.redirect_uri.is_none());
+    }
+
+    #[test]
+    fn test_load_save_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.rfd.pad_width = 6;
+        config.github.app_client_id = "test-client-id".into();
+        config.github.redirect_uri = Some("http://localhost:3000/callback".into());
+
+        config.save(dir.path()).unwrap();
+        let loaded = Config::load(dir.path()).unwrap();
+
+        assert_eq!(loaded.rfd.pad_width, 6);
+        assert_eq!(loaded.rfd.default_format, "md");
+        assert_eq!(loaded.github.app_client_id, "test-client-id");
+        assert_eq!(
+            loaded.github.redirect_uri.as_deref(),
+            Some("http://localhost:3000/callback")
+        );
+    }
+
+    #[test]
+    fn test_load_missing_file_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::load(dir.path()).unwrap();
+        assert_eq!(config.rfd.pad_width, 4);
+        assert_eq!(config.rfd.main_branch, "main");
+    }
+
+    #[test]
+    fn test_load_partial_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("rfd.toml"),
+            "[rfd]\npad_width = 5\n",
+        )
+        .unwrap();
+        let config = Config::load(dir.path()).unwrap();
+        assert_eq!(config.rfd.pad_width, 5);
+        assert_eq!(config.rfd.main_branch, "main"); // default preserved
+    }
+}

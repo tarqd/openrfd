@@ -285,3 +285,169 @@ impl std::fmt::Display for AnchorHealth {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_id_format() {
+        let id = Annotation::new_id(42, 4);
+        assert!(id.starts_with("urn:openrfd:0042:"));
+        // UUID portion is 36 chars (8-4-4-4-12)
+        let uuid_part = id.strip_prefix("urn:openrfd:0042:").unwrap();
+        assert_eq!(uuid_part.len(), 36);
+    }
+
+    #[test]
+    fn test_new_id_custom_pad_width() {
+        let id = Annotation::new_id(1, 6);
+        assert!(id.starts_with("urn:openrfd:000001:"));
+    }
+
+    #[test]
+    fn test_new_id_uniqueness() {
+        let id1 = Annotation::new_id(1, 4);
+        let id2 = Annotation::new_id(1, 4);
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_is_reply() {
+        let annotation = Annotation {
+            context: default_context(),
+            annotation_type: default_annotation_type(),
+            id: "urn:openrfd:0001:test".into(),
+            creator: Creator {
+                creator_type: "Person".into(),
+                name: "test".into(),
+                email: None,
+                url: None,
+            },
+            created: chrono::Utc::now(),
+            motivation: Motivation::Commenting,
+            body: AnnotationBody {
+                body_type: default_textual_body(),
+                value: "reply".into(),
+                format: default_format(),
+            },
+            target: AnnotationTarget::Reference("urn:openrfd:0001:parent".into()),
+            resolved: None,
+        };
+        assert!(annotation.is_reply());
+        assert_eq!(annotation.reply_to(), Some("urn:openrfd:0001:parent"));
+    }
+
+    #[test]
+    fn test_not_reply() {
+        let annotation = Annotation {
+            context: default_context(),
+            annotation_type: default_annotation_type(),
+            id: "urn:openrfd:0001:test".into(),
+            creator: Creator {
+                creator_type: "Person".into(),
+                name: "test".into(),
+                email: None,
+                url: None,
+            },
+            created: chrono::Utc::now(),
+            motivation: Motivation::Commenting,
+            body: AnnotationBody {
+                body_type: default_textual_body(),
+                value: "a comment".into(),
+                format: default_format(),
+            },
+            target: AnnotationTarget::Resource(SpecificResource {
+                resource_type: default_specific_resource(),
+                source: "rfd/0001/README.md".into(),
+                state: None,
+                selector: vec![],
+            }),
+            resolved: None,
+        };
+        assert!(!annotation.is_reply());
+        assert_eq!(annotation.reply_to(), None);
+    }
+
+    #[test]
+    fn test_collection_to_bytes_from_bytes_roundtrip() {
+        let mut collection = AnnotationCollection::new("Test Collection");
+        collection.items.push(Annotation {
+            context: default_context(),
+            annotation_type: default_annotation_type(),
+            id: "urn:openrfd:0001:abc".into(),
+            creator: Creator {
+                creator_type: "Person".into(),
+                name: "alice".into(),
+                email: Some("alice@example.com".into()),
+                url: None,
+            },
+            created: chrono::Utc::now(),
+            motivation: Motivation::Suggesting,
+            body: AnnotationBody {
+                body_type: default_textual_body(),
+                value: "Consider rephrasing".into(),
+                format: default_format(),
+            },
+            target: AnnotationTarget::Resource(SpecificResource {
+                resource_type: default_specific_resource(),
+                source: "rfd/0001/README.md".into(),
+                state: Some(GitState {
+                    state_type: "GitState".into(),
+                    commit: "abc123".into(),
+                    r#ref: Some("rfd/0001".into()),
+                }),
+                selector: vec![
+                    Selector::TextQuoteSelector {
+                        exact: "some text".into(),
+                        prefix: Some("before ".into()),
+                        suffix: Some(" after".into()),
+                    },
+                    Selector::TextPositionSelector { start: 10, end: 19 },
+                ],
+            }),
+            resolved: None,
+        });
+
+        let bytes = collection.to_bytes().unwrap();
+        let parsed = AnnotationCollection::from_bytes(&bytes).unwrap();
+
+        assert_eq!(parsed.label, "Test Collection");
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].id, "urn:openrfd:0001:abc");
+        assert_eq!(parsed.items[0].creator.name, "alice");
+        assert_eq!(parsed.items[0].body.value, "Consider rephrasing");
+
+        // Check selector roundtrip
+        if let AnnotationTarget::Resource(ref res) = parsed.items[0].target {
+            assert_eq!(res.source, "rfd/0001/README.md");
+            assert_eq!(res.selector.len(), 2);
+            if let Selector::TextQuoteSelector { exact, prefix, suffix } = &res.selector[0] {
+                assert_eq!(exact, "some text");
+                assert_eq!(prefix.as_deref(), Some("before "));
+                assert_eq!(suffix.as_deref(), Some(" after"));
+            } else {
+                panic!("expected TextQuoteSelector");
+            }
+        } else {
+            panic!("expected Resource target");
+        }
+    }
+
+    #[test]
+    fn test_collection_new_has_generator() {
+        let collection = AnnotationCollection::new("My Annotations");
+        assert_eq!(collection.label, "My Annotations");
+        assert!(collection.items.is_empty());
+        assert!(collection.generator.is_some());
+        assert_eq!(collection.generator.unwrap().name, "openrfd");
+    }
+
+    #[test]
+    fn test_anchor_health_display() {
+        assert_eq!(AnchorHealth::Live.to_string(), "live");
+        assert_eq!(AnchorHealth::Approximate.to_string(), "approximate");
+        assert_eq!(AnchorHealth::Stale.to_string(), "stale");
+        assert_eq!(AnchorHealth::Orphaned.to_string(), "orphaned");
+    }
+}

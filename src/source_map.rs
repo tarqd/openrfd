@@ -41,3 +41,77 @@ pub fn line_number_at(text: &str, byte_offset: usize) -> u32 {
     let offset = byte_offset.min(text.len());
     text[..offset].matches('\n').count() as u32 + 1
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_line_number_at_first_line() {
+        assert_eq!(line_number_at("hello\nworld", 0), 1);
+        assert_eq!(line_number_at("hello\nworld", 3), 1);
+    }
+
+    #[test]
+    fn test_line_number_at_second_line() {
+        assert_eq!(line_number_at("hello\nworld", 6), 2);
+        assert_eq!(line_number_at("hello\nworld", 10), 2);
+    }
+
+    #[test]
+    fn test_line_number_at_newline_boundary() {
+        // Offset at the newline itself counts it
+        assert_eq!(line_number_at("hello\nworld", 5), 1);
+        // One past the newline
+        assert_eq!(line_number_at("hello\nworld\nfoo", 11), 2);
+        assert_eq!(line_number_at("hello\nworld\nfoo", 12), 3);
+    }
+
+    #[test]
+    fn test_line_number_at_beyond_end() {
+        // Clamps to text length
+        assert_eq!(line_number_at("hello\nworld", 999), 2);
+    }
+
+    #[test]
+    fn test_line_number_at_empty_string() {
+        assert_eq!(line_number_at("", 0), 1);
+    }
+
+    #[test]
+    fn test_rendered_document_lookup() {
+        let doc = RenderedDocument {
+            html: "<p>hello</p><p>world</p>".into(),
+            source_map: vec![
+                SourceSpan {
+                    source_range: 0..5,
+                    output_range: 0..12,
+                    line_range: 1..2,
+                },
+                SourceSpan {
+                    source_range: 6..11,
+                    output_range: 12..24,
+                    line_range: 2..3,
+                },
+            ],
+        };
+
+        // Find source span by HTML offset
+        let span = doc.source_for_output(5).unwrap();
+        assert_eq!(span.source_range, 0..5);
+
+        let span = doc.source_for_output(15).unwrap();
+        assert_eq!(span.source_range, 6..11);
+
+        assert!(doc.source_for_output(99).is_none());
+
+        // Find output span by source offset
+        let span = doc.output_for_source(3).unwrap();
+        assert_eq!(span.output_range, 0..12);
+
+        let span = doc.output_for_source(8).unwrap();
+        assert_eq!(span.output_range, 12..24);
+
+        assert!(doc.output_for_source(99).is_none());
+    }
+}

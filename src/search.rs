@@ -146,3 +146,45 @@ fn strip_markdown(md: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_markdown_headings() {
+        let md = "# Title\n## Subtitle\nParagraph text.";
+        let stripped = strip_markdown(md);
+        assert!(stripped.contains("Title"));
+        assert!(stripped.contains("Subtitle"));
+        assert!(stripped.contains("Paragraph text."));
+        assert!(!stripped.contains('#'));
+    }
+
+    #[test]
+    fn test_strip_markdown_code_fences() {
+        let md = "Before\n```rust\nlet x = 1;\n```\nAfter";
+        let stripped = strip_markdown(md);
+        assert!(stripped.contains("Before"));
+        assert!(stripped.contains("After"));
+        // Code fence delimiters are skipped
+        assert!(!stripped.contains("```"));
+        // Content between fences is preserved (simple line-by-line stripping)
+        assert!(stripped.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn test_strip_markdown_frontmatter_delimiters() {
+        let md = "---\nauthors: Alice\nstate: published\n---\n\nContent";
+        let stripped = strip_markdown(md);
+        assert!(stripped.contains("Content"));
+        assert!(stripped.contains("authors: Alice"));
+        // --- delimiters are skipped
+        assert!(!stripped.contains("---"));
+    }
+
+    #[test]
+    fn test_strip_markdown_empty() {
+        assert_eq!(strip_markdown("").trim(), "");
+    }
+}

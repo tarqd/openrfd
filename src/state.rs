@@ -110,3 +110,57 @@ impl FromStr for Visibility {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_state_roundtrip_all() {
+        for state in State::ALL {
+            let s = state.as_str();
+            let parsed: State = s.parse().unwrap();
+            assert_eq!(*state, parsed);
+            assert_eq!(state.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn test_state_from_str_case_insensitive() {
+        assert_eq!(State::from_str("Discussion").unwrap(), State::Discussion);
+        assert_eq!(State::from_str("PUBLISHED").unwrap(), State::Published);
+        assert_eq!(State::from_str("  ideation  ").unwrap(), State::Ideation);
+    }
+
+    #[test]
+    fn test_state_from_str_invalid() {
+        let err = State::from_str("bogus").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid state 'bogus'"));
+        assert!(msg.contains("prediscussion"));
+    }
+
+    #[test]
+    fn test_visibility_roundtrip() {
+        let cases = [
+            (Visibility::Public, "public"),
+            (Visibility::Internal, "internal"),
+            (Visibility::Confidential, "confidential"),
+        ];
+        for (vis, expected) in cases {
+            assert_eq!(vis.as_str(), expected);
+            assert_eq!(vis.to_string(), expected);
+            assert_eq!(Visibility::from_str(expected).unwrap(), vis);
+        }
+    }
+
+    #[test]
+    fn test_visibility_default_is_internal() {
+        assert_eq!(Visibility::default(), Visibility::Internal);
+    }
+
+    #[test]
+    fn test_visibility_from_str_invalid() {
+        assert!(Visibility::from_str("secret").is_err());
+    }
+}
