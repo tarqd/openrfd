@@ -140,11 +140,6 @@ labels:
 | `visibility` | no       | enum       | `public`, `internal`, `confidential` (default: `internal`) |
 | `labels`     | no       | list       | Free-form tags for filtering             |
 
-### AsciiDoc Support
-
-AsciiDoc is supported as an alternative format. The renderer detects the file
-extension (`.md` or `.adoc`) and uses the appropriate parser.
-
 ---
 
 ## Lifecycle States

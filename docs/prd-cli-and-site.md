@@ -338,21 +338,17 @@ Items explicitly out of scope for v1 but worth tracking:
 
 ## Open Questions
 
-1. **AsciiDoc parity** — Should v1 support AsciiDoc fully, or ship with
-   Markdown only and add AsciiDoc later? AsciiDoc parsing in Rust is less
-   mature than Markdown.
-
-2. **Web-based annotation creation** — For `rfd build --public` sites on
+1. **Web-based annotation creation** — For `rfd build --public` sites on
    GitHub Pages, there's no server to receive new annotations. Options:
    - GitHub API: create a commit adding the annotation JSON via the API
    - GitHub Actions: trigger a workflow that adds the annotation
    - External service: small API that creates PRs with annotation files
    - Local only: annotations created via CLI or editor, not the web view
 
-3. **Annotation conflict resolution** — When two people annotate the same
+2. **Annotation conflict resolution** — When two people annotate the same
    text concurrently on different branches, the JSON files are in separate
    directories and rarely conflict. But annotation IDs must be globally unique
    (UUIDs solve this).
 
-4. **Large RFD repositories** — At hundreds or thousands of RFDs, should we
+3. **Large RFD repositories** — At hundreds or thousands of RFDs, should we
    shard the search index? Pre-build per-label or per-state indices?
