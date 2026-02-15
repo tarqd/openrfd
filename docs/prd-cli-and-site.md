@@ -152,6 +152,124 @@ on push to main:
 
 ---
 
+## Web Frontend
+
+The static site becomes interactive when a user signs in with GitHub. Without
+login, the site is a read-only rendered view of all RFDs and their committed
+annotations. With login, users can browse live PR discussions, add annotations,
+and propose edits — all from the browser, all backed by the GitHub API. No
+additional server infrastructure is required.
+
+### GitHub OAuth (Client-Side)
+
+The site uses the GitHub OAuth [device flow][device-flow] or a GitHub App
+installation to authenticate users directly from the browser. The OAuth app is
+configured in `.rfdconfig`:
+
+```toml
+[github]
+app_client_id = "Iv1.abc123"    # GitHub OAuth App or GitHub App client ID
+```
+
+On login the frontend receives a token scoped to the repository. All subsequent
+API calls (reading PRs, creating commits, posting reviews) use this token
+client-side via the GitHub REST/GraphQL API.
+
+[device-flow]: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow
+
+### Branch Naming Convention
+
+Each RFD is edited on exactly one branch at a time. The canonical branch name
+is:
+
+```
+rfd/NNNN
+```
+
+Examples: `rfd/0001`, `rfd/0042`, `rfd/0100`.
+
+This convention is enforced by the CLI (`rfd new`, `rfd edit`, `rfd discuss`)
+and assumed by the web frontend. It provides a predictable mapping between RFD
+number and branch/PR, enabling the frontend to:
+
+- Look up the active PR for any RFD by branch name
+- Determine whether the current user has an in-progress edit
+- Link directly to the correct branch for annotation commits
+
+A branch `rfd/NNNN` can represent either a new RFD or a revision to an
+existing published one. Only one open PR per RFD is allowed at a time.
+
+### Authenticated Features
+
+#### Live PR Discussion
+
+When viewing an RFD in `discussion` state, the frontend fetches the associated
+PR's review comments via the GitHub API and renders them alongside the committed
+annotations. This gives readers a unified view:
+
+- **Committed annotations** — loaded from the static build (always available)
+- **PR review comments** — fetched live from GitHub (requires login)
+
+PR comments appear in the same annotation sidebar, visually distinguished as
+"from PR review." They are not yet persisted as W3C annotations — that happens
+at merge time via `rfd import-annotations`.
+
+#### Active Revision Indicator
+
+For any RFD, the frontend checks whether a branch `rfd/NNNN` exists with an
+open PR. If so, the RFD page shows a banner:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  This RFD has an active revision: PR #63 by @jane       │
+│  [View changes]  [View on GitHub]                       │
+└─────────────────────────────────────────────────────────┘
+```
+
+This makes it visible that discussion is happening, even when reading the
+published (main branch) version.
+
+#### Adding Annotations
+
+Authenticated users can select text and add annotations directly from the
+browser. The frontend:
+
+1. Builds the W3C annotation object (selectors, GitState, creator from GitHub
+   identity)
+2. Commits the annotation JSON file to the `rfd/NNNN` branch via the GitHub
+   Contents API (or creates the branch if one doesn't exist)
+3. If no PR exists for that branch, offers to open one
+
+This means annotations added from the web are immediately visible to other
+authenticated users and will be included when the PR is merged.
+
+#### Editing an RFD
+
+Authenticated users can propose edits to an RFD from the browser:
+
+- If the user already has branch `rfd/NNNN` with an open PR: edits commit to
+  that branch
+- If no branch exists: the frontend forks a new `rfd/NNNN` branch from `main`,
+  commits the edit, and offers to open a PR
+
+The edit UI is intentionally minimal — a textarea with the raw markdown, not a
+WYSIWYG editor. This keeps the implementation simple and the markdown source
+canonical.
+
+### Unauthenticated Experience
+
+Without login, the site is fully functional as a read-only resource:
+
+- Browse and search all RFDs
+- Read committed annotations
+- View the annotation sidebar with threading
+- See that a revision is in progress (the banner links to the PR on GitHub)
+
+The login prompt appears only when a user tries to annotate, edit, or view live
+PR comments.
+
+---
+
 ## Rust Crate Structure
 
 ```
@@ -325,8 +443,6 @@ Items explicitly out of scope for v1 but worth tracking:
   editor selections, annotation panel sidebar.
 - **Neovim/Emacs plugins** — Same functionality via LSP or native plugin.
 - **Slack/Discord import** — `rfd import-annotations --source slack --url "..."`.
-- **Annotation API server** — Optional small server for creating annotations
-  from the web view without going through GitHub API.
 - **RFD dependency graph** — Visualize relationships between RFDs.
 - **RSS/Atom feed** — Subscribe to new and updated RFDs.
 - **PDF export** — For offline reading and formal distribution.
@@ -338,17 +454,10 @@ Items explicitly out of scope for v1 but worth tracking:
 
 ## Open Questions
 
-1. **Web-based annotation creation** — For `rfd build --public` sites on
-   GitHub Pages, there's no server to receive new annotations. Options:
-   - GitHub API: create a commit adding the annotation JSON via the API
-   - GitHub Actions: trigger a workflow that adds the annotation
-   - External service: small API that creates PRs with annotation files
-   - Local only: annotations created via CLI or editor, not the web view
-
-2. **Annotation conflict resolution** — When two people annotate the same
+1. **Annotation conflict resolution** — When two people annotate the same
    text concurrently on different branches, the JSON files are in separate
    directories and rarely conflict. But annotation IDs must be globally unique
    (UUIDs solve this).
 
-3. **Large RFD repositories** — At hundreds or thousands of RFDs, should we
+2. **Large RFD repositories** — At hundreds or thousands of RFDs, should we
    shard the search index? Pre-build per-label or per-state indices?
