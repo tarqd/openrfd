@@ -8,8 +8,8 @@ use crate::config::Config;
 
 /// Import annotations from a GitHub PR's review comments.
 ///
-/// This reads PR review comments via the `gh` CLI and converts them to
-/// W3C Web Annotations stored in the RFD's annotations directory.
+/// Reads PR review comments via the `gh` CLI and converts them to
+/// W3C Web Annotations stored on the RFD's custom ref (`refs/rfd/NNNN`).
 pub fn import_pr_annotations(
     repo_root: &Path,
     config: &Config,
@@ -17,11 +17,6 @@ pub fn import_pr_annotations(
     pr_number: u32,
 ) -> Result<Vec<Annotation>> {
     let padded = config.pad_number(rfd_number);
-    let annotations_dir = repo_root
-        .join("rfd")
-        .join(&padded)
-        .join("annotations");
-    std::fs::create_dir_all(&annotations_dir)?;
 
     // Use gh CLI to fetch PR review comments
     let output = std::process::Command::new("gh")
@@ -127,7 +122,7 @@ pub fn import_pr_annotations(
         annotations.push(annotation);
     }
 
-    // Save as an AnnotationCollection
+    // Save to the RFD's custom ref (never touches working tree)
     if !annotations.is_empty() {
         let collection = AnnotationCollection {
             context: "http://www.w3.org/ns/anno.jsonld".into(),
@@ -141,13 +136,21 @@ pub fn import_pr_annotations(
             items: annotations.clone(),
         };
 
-        let path = annotations_dir.join(format!("pr-{}.json", pr_number));
-        collection.save(&path)?;
+        let repo = crate::refs::open_repo(repo_root)?;
+        let ref_name = config.ref_name(rfd_number);
+        let path = format!("annotations/pr-{}.json", pr_number);
+        collection.save_to_ref(
+            &repo,
+            &ref_name,
+            &path,
+            &format!("Import annotations from PR #{}", pr_number),
+        )?;
+
         eprintln!(
             "Imported {} annotations from PR #{} to {}",
             collection.items.len(),
             pr_number,
-            path.display()
+            ref_name
         );
     } else {
         eprintln!("No review comments found on PR #{}", pr_number);

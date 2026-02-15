@@ -120,4 +120,10 @@ impl Config {
     pub fn static_dir(&self, repo_root: &Path) -> PathBuf {
         repo_root.join("static")
     }
+
+    /// Get the custom ref name for an RFD's metadata store.
+    /// Returns e.g. `refs/rfd/0042`.
+    pub fn ref_name(&self, num: u32) -> String {
+        format!("refs/rfd/{}", self.pad_number(num))
+    }
 }

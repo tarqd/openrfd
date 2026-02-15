@@ -3,6 +3,7 @@ mod build;
 mod config;
 mod import;
 mod index;
+mod refs;
 mod render;
 mod repo;
 mod rfd;
@@ -335,12 +336,26 @@ fn cmd_new(repo_root: &PathBuf, config: &Config, title: &str) -> Result<()> {
         std::fs::write(&file_path, content)?;
     }
 
-    // Commit
+    // Commit to working branch
     let rel_path = file_path.strip_prefix(repo_root)?.to_string_lossy().to_string();
     repo::commit(
         repo_root,
         &[&rel_path],
         &format!("rfd: reserve RFD {} — {}", padded, title),
+    )?;
+
+    // Create the ref for this RFD (NoteDb-style metadata store)
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(num);
+    let content = std::fs::read(&file_path)?;
+    refs::create_ref(
+        &repo,
+        &ref_name,
+        &format!("Reserve RFD {} — {}\n\nState: prediscussion", padded, title),
+        &[refs::TreeEntry {
+            path: "README.md".into(),
+            content,
+        }],
     )?;
 
     eprintln!();
@@ -487,6 +502,21 @@ fn cmd_state(repo_root: &PathBuf, config: &Config, number: u32, new_state: &str)
         &format!("rfd: update RFD {} state to {}", padded, new_state),
     )?;
 
+    // Record state transition on the ref
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
+    let content = std::fs::read(&file)?;
+    refs::write_commit(
+        &repo,
+        &ref_name,
+        &format!("State: {}\n\nPrevious-State: {}", new_state, old_state),
+        &[refs::TreeEntry {
+            path: "README.md".into(),
+            content,
+        }],
+        &[],
+    )?;
+
     Ok(())
 }
 
@@ -616,6 +646,17 @@ fn cmd_discuss(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> 
     )?;
     repo::push(repo_root, &branch)?;
 
+    // Record discussion on the ref
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
+    refs::write_commit(
+        &repo,
+        &ref_name,
+        &format!("State: discussion\n\nDiscussion: {}", pr_url),
+        &[],
+        &[],
+    )?;
+
     Ok(())
 }
 
@@ -646,6 +687,21 @@ fn cmd_publish(repo_root: &PathBuf, config: &Config, number: u32) -> Result<()> 
         repo_root,
         &branch,
         &format!("Merge RFD {} (published)", padded),
+    )?;
+
+    // Record publish + revision snapshot on the ref
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
+    let content = std::fs::read(&file)?;
+    refs::write_commit(
+        &repo,
+        &ref_name,
+        "State: published",
+        &[refs::TreeEntry {
+            path: "README.md".into(),
+            content,
+        }],
+        &[],
     )?;
 
     eprintln!("RFD {} published and merged to {}", padded, config.rfd.main_branch);
@@ -806,30 +862,20 @@ fn cmd_annotate(
         resolved: None,
     };
 
-    // Add to or create an annotation collection
-    let annotations_dir = dir.join("annotations");
-    std::fs::create_dir_all(&annotations_dir)?;
+    // Store annotation on the RFD's custom ref (never touches working tree)
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
 
-    let collection_path = annotations_dir.join("cli.json");
-    let mut collection = if collection_path.exists() {
-        AnnotationCollection::load(&collection_path)?
-    } else {
-        AnnotationCollection::new("CLI Annotations")
-    };
+    let mut collection = AnnotationCollection::load_from_ref(&repo, &ref_name, "annotations/cli.json")?
+        .unwrap_or_else(|| AnnotationCollection::new("CLI Annotations"));
 
     eprintln!("Added annotation: {}", annotation.id);
     collection.items.push(annotation);
-    collection.save(&collection_path)?;
-
-    // Commit the annotation
-    let rel_path = collection_path
-        .strip_prefix(repo_root)?
-        .to_string_lossy()
-        .to_string();
-    repo::commit(
-        repo_root,
-        &[&rel_path],
-        &format!("rfd: add annotation to RFD {}", padded),
+    collection.save_to_ref(
+        &repo,
+        &ref_name,
+        "annotations/cli.json",
+        &format!("Add annotation to RFD {}", padded),
     )?;
 
     Ok(())
@@ -847,59 +893,50 @@ fn cmd_annotations(
     }
 
     let padded = config.pad_number(number);
-    let dir = config.rfd_path(repo_root, number);
-    let annotations_dir = dir.join("annotations");
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
 
-    if !annotations_dir.exists() {
-        eprintln!("No annotations for RFD {}", padded);
-        return Ok(());
-    }
+    let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
 
     let mut total = 0;
-    for entry in std::fs::read_dir(&annotations_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
-            let collection = AnnotationCollection::load(&path)?;
-            let source_name = path.file_stem().unwrap_or_default().to_string_lossy();
+    for (source_name, collection) in &collections {
+        let source_stem = source_name.trim_end_matches(".json");
+        if !collection.items.is_empty() {
+            println!("{} ({})", collection.label.bold(), source_stem);
+            for annotation in &collection.items {
+                let creator = &annotation.creator.name;
+                let date = annotation.created.format("%Y-%m-%d");
+                let body = &annotation.body.value;
+                let resolved = if annotation.resolved.is_some() {
+                    " [resolved]".dimmed().to_string()
+                } else {
+                    String::new()
+                };
 
-            if !collection.items.is_empty() {
-                println!("{} ({})", collection.label.bold(), source_name);
-                for annotation in &collection.items {
-                    let creator = &annotation.creator.name;
-                    let date = annotation.created.format("%Y-%m-%d");
-                    let body = &annotation.body.value;
-                    let resolved = if annotation.resolved.is_some() {
-                        " [resolved]".dimmed().to_string()
-                    } else {
-                        String::new()
-                    };
+                println!("  {} {} @ {}{}", "•".cyan(), creator, date, resolved);
 
-                    println!("  {} {} @ {}{}", "•".cyan(), creator, date, resolved);
-
-                    // Show quoted text if available
-                    if let AnnotationTarget::Resource(ref res) = annotation.target {
-                        for sel in &res.selector {
-                            if let Selector::TextQuoteSelector { exact, .. } = sel {
-                                let truncated = if exact.len() > 60 {
-                                    format!("{}...", &exact[..60])
-                                } else {
-                                    exact.clone()
-                                };
-                                println!("    > {}", truncated.dimmed());
-                                break;
-                            }
+                // Show quoted text if available
+                if let AnnotationTarget::Resource(ref res) = annotation.target {
+                    for sel in &res.selector {
+                        if let Selector::TextQuoteSelector { exact, .. } = sel {
+                            let truncated = if exact.len() > 60 {
+                                format!("{}...", &exact[..60])
+                            } else {
+                                exact.clone()
+                            };
+                            println!("    > {}", truncated.dimmed());
+                            break;
                         }
                     }
-
-                    // Show comment
-                    for line in body.lines() {
-                        println!("    {}", line);
-                    }
-                    println!();
-
-                    total += 1;
                 }
+
+                // Show comment
+                for line in body.lines() {
+                    println!("    {}", line);
+                }
+                println!();
+
+                total += 1;
             }
         }
     }
@@ -919,17 +956,8 @@ fn cmd_import_annotations(
     number: u32,
     pr: u32,
 ) -> Result<()> {
+    // import writes directly to the RFD's custom ref — no working tree changes
     import::import_pr_annotations(repo_root, config, number, pr)?;
-
-    // Commit the imported annotations
-    let padded = config.pad_number(number);
-    let annotations_dir = format!("rfd/{}/annotations/", padded);
-    repo::commit(
-        repo_root,
-        &[&annotations_dir],
-        &format!("rfd: import annotations from PR #{} to RFD {}", pr, padded),
-    )?;
-
     Ok(())
 }
 
@@ -940,40 +968,31 @@ fn cmd_resolve(
     annotation_id: &str,
 ) -> Result<()> {
     let padded = config.pad_number(number);
-    let dir = config.rfd_path(repo_root, number);
-    let annotations_dir = dir.join("annotations");
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
 
-    if !annotations_dir.exists() {
-        anyhow::bail!("no annotations directory for RFD {}", padded);
-    }
+    let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
 
-    for entry in std::fs::read_dir(&annotations_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
-            let mut collection = AnnotationCollection::load(&path)?;
-            let mut found = false;
-
-            for annotation in &mut collection.items {
-                if annotation.id == annotation_id {
-                    annotation.resolved = Some(Utc::now());
-                    found = true;
-                    break;
-                }
+    for (filename, mut collection) in collections {
+        let mut found = false;
+        for annotation in &mut collection.items {
+            if annotation.id == annotation_id {
+                annotation.resolved = Some(Utc::now());
+                found = true;
+                break;
             }
+        }
 
-            if found {
-                collection.save(&path)?;
-                eprintln!("Resolved annotation: {}", annotation_id);
-
-                let rel_path = path.strip_prefix(repo_root)?.to_string_lossy().to_string();
-                repo::commit(
-                    repo_root,
-                    &[&rel_path],
-                    &format!("rfd: resolve annotation in RFD {}", padded),
-                )?;
-                return Ok(());
-            }
+        if found {
+            let path = format!("annotations/{}", filename);
+            collection.save_to_ref(
+                &repo,
+                &ref_name,
+                &path,
+                &format!("Resolve annotation in RFD {}", padded),
+            )?;
+            eprintln!("Resolved annotation: {}", annotation_id);
+            return Ok(());
         }
     }
 

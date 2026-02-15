@@ -199,21 +199,66 @@ impl AnnotationCollection {
         }
     }
 
-    /// Load an annotation collection from a JSON file.
-    pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let collection: Self = serde_json::from_str(&content)?;
+    /// Parse from JSON bytes.
+    pub fn from_bytes(data: &[u8]) -> anyhow::Result<Self> {
+        let collection: Self = serde_json::from_slice(data)?;
         Ok(collection)
     }
 
-    /// Save the collection to a JSON file.
-    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+    /// Serialize to pretty JSON bytes.
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let content = serde_json::to_string_pretty(self)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        Ok(content.into_bytes())
+    }
+
+    /// Load from a ref's tree (e.g., `refs/rfd/0042`, path `annotations/cli.json`).
+    pub fn load_from_ref(
+        repo: &git2::Repository,
+        ref_name: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<Self>> {
+        match crate::refs::read_file(repo, ref_name, path)? {
+            Some(data) => Ok(Some(Self::from_bytes(&data)?)),
+            None => Ok(None),
         }
-        std::fs::write(path, content)?;
+    }
+
+    /// Save to a ref's tree, creating a commit.
+    pub fn save_to_ref(
+        &self,
+        repo: &git2::Repository,
+        ref_name: &str,
+        path: &str,
+        message: &str,
+    ) -> anyhow::Result<()> {
+        let data = self.to_bytes()?;
+        let entry = crate::refs::TreeEntry {
+            path: path.to_string(),
+            content: data,
+        };
+        crate::refs::write_commit(repo, ref_name, message, &[entry], &[])?;
         Ok(())
+    }
+
+    /// Load all annotation collections from a ref's annotations/ directory.
+    pub fn load_all_from_ref(
+        repo: &git2::Repository,
+        ref_name: &str,
+    ) -> anyhow::Result<Vec<(String, Self)>> {
+        let files = crate::refs::list_dir(repo, ref_name, "annotations")?;
+        let mut collections = Vec::new();
+
+        for file in files {
+            if file.ends_with(".json") {
+                let path = format!("annotations/{}", file);
+                if let Some(data) = crate::refs::read_file(repo, ref_name, &path)? {
+                    let collection = Self::from_bytes(&data)?;
+                    collections.push((file, collection));
+                }
+            }
+        }
+
+        Ok(collections)
     }
 }
 

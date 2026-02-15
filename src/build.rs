@@ -129,7 +129,7 @@ fn build_index_page(tera: &Tera, rfds: &[Rfd], output_dir: &Path, config: &Confi
 fn build_rfd_page(
     tera: &Tera,
     rfd: &Rfd,
-    _repo_root: &Path,
+    repo_root: &Path,
     output_dir: &Path,
     config: &Config,
 ) -> Result<()> {
@@ -140,17 +140,13 @@ fn build_rfd_page(
     // Render markdown to HTML with source mapping
     let rendered = render_markdown(&rfd.body);
 
-    // Load annotations
-    let annotations_dir = rfd.path.parent().unwrap().join("annotations");
+    // Load annotations from the RFD's custom ref
     let mut all_annotations = Vec::new();
-    if annotations_dir.exists() {
-        for entry in std::fs::read_dir(&annotations_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
-                if let Ok(collection) = AnnotationCollection::load(&path) {
-                    all_annotations.extend(collection.items);
-                }
+    if let Ok(repo) = crate::refs::open_repo(repo_root) {
+        let ref_name = config.ref_name(rfd.number);
+        if let Ok(collections) = AnnotationCollection::load_all_from_ref(&repo, &ref_name) {
+            for (_filename, collection) in collections {
+                all_annotations.extend(collection.items);
             }
         }
     }

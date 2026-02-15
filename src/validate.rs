@@ -140,40 +140,35 @@ pub fn validate_all(repo_root: &Path, config: &Config) -> Result<bool> {
 }
 
 /// Check annotation health for a specific RFD.
+/// Reads annotations from the RFD's custom ref (`refs/rfd/NNNN`).
 pub fn check_annotations(repo_root: &Path, config: &Config, rfd_number: u32) -> Result<()> {
     let padded = config.pad_number(rfd_number);
     let rfd_dir = repo_root.join("rfd").join(&padded);
-    let annotations_dir = rfd_dir.join("annotations");
 
-    if !annotations_dir.exists() {
-        eprintln!("No annotations directory for RFD {}", padded);
-        return Ok(());
-    }
-
-    // Read the RFD source
+    // Read the RFD source from the working tree
     let rfd_file = find_rfd_file(&rfd_dir)
         .ok_or_else(|| anyhow::anyhow!("RFD {} not found", padded))?;
     let rfd = Rfd::load(&rfd_file)?;
+
+    // Load annotations from the custom ref
+    let repo = crate::refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(rfd_number);
+    let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
 
     let mut live = 0;
     let mut approximate = 0;
     let mut stale = 0;
     let mut orphaned = 0;
 
-    for entry in std::fs::read_dir(&annotations_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
-            let collection = AnnotationCollection::load(&path)?;
-            for annotation in &collection.items {
-                if let crate::annotation::AnnotationTarget::Resource(ref resource) = annotation.target {
-                    let health = check_selectors(&rfd.body, &resource.selector);
-                    match health {
-                        AnchorHealth::Live => live += 1,
-                        AnchorHealth::Approximate => approximate += 1,
-                        AnchorHealth::Stale => stale += 1,
-                        AnchorHealth::Orphaned => orphaned += 1,
-                    }
+    for (_filename, collection) in collections {
+        for annotation in &collection.items {
+            if let crate::annotation::AnnotationTarget::Resource(ref resource) = annotation.target {
+                let health = check_selectors(&rfd.body, &resource.selector);
+                match health {
+                    AnchorHealth::Live => live += 1,
+                    AnchorHealth::Approximate => approximate += 1,
+                    AnchorHealth::Stale => stale += 1,
+                    AnchorHealth::Orphaned => orphaned += 1,
                 }
             }
         }
@@ -191,6 +186,9 @@ pub fn check_annotations(repo_root: &Path, config: &Config, rfd_number: u32) -> 
     }
     if orphaned > 0 {
         eprintln!("  {} {}", format!("{}", orphaned).red(), "orphaned");
+    }
+    if live + approximate + stale + orphaned == 0 {
+        eprintln!("  (no annotations)");
     }
 
     Ok(())
