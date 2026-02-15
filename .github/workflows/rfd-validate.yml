@@ -1,0 +1,121 @@
+name: Validate RFDs
+
+on:
+  push:
+    paths:
+      - 'rfd/**'
+  pull_request:
+    paths:
+      - 'rfd/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate RFD format
+        run: |
+          errors=0
+          valid_states="prediscussion ideation discussion published committed abandoned"
+
+          for dir in rfd/[0-9]*/; do
+            [ -d "$dir" ] || continue
+            padded=$(basename "$dir")
+
+            # Find the RFD file
+            file=""
+            if [ -f "$dir/README.md" ]; then
+              file="$dir/README.md"
+            elif [ -f "$dir/README.adoc" ]; then
+              file="$dir/README.adoc"
+            else
+              echo "::error::RFD $padded: no README.md or README.adoc found"
+              errors=$((errors + 1))
+              continue
+            fi
+
+            echo "Checking RFD $padded ($file)..."
+
+            # Check for YAML frontmatter (markdown only)
+            if echo "$file" | grep -q '\.md$'; then
+              if ! head -1 "$file" | grep -q '^---$'; then
+                echo "::error file=$file::Missing YAML frontmatter"
+                errors=$((errors + 1))
+                continue
+              fi
+
+              # Extract state
+              state=$(sed -n '/^---$/,/^---$/p' "$file" | grep '^state:' | head -1 | sed 's/^state:[[:space:]]*//')
+              if [ -z "$state" ]; then
+                echo "::error file=$file::Missing 'state' field in frontmatter"
+                errors=$((errors + 1))
+              elif ! echo "$valid_states" | grep -qw "$state"; then
+                echo "::error file=$file::Invalid state '$state'. Valid: $valid_states"
+                errors=$((errors + 1))
+              fi
+
+              # Check for authors field
+              authors=$(sed -n '/^---$/,/^---$/p' "$file" | grep '^authors:' | head -1 | sed 's/^authors:[[:space:]]*//')
+              if [ -z "$authors" ]; then
+                echo "::warning file=$file::Missing 'authors' field"
+              fi
+            fi
+
+            # Check directory naming (should be zero-padded number)
+            if ! echo "$padded" | grep -qE '^[0-9]+$'; then
+              echo "::error::Directory '$padded' is not a valid RFD number"
+              errors=$((errors + 1))
+            fi
+          done
+
+          if [ "$errors" -gt 0 ]; then
+            echo ""
+            echo "Validation failed with $errors error(s)"
+            exit 1
+          fi
+
+          echo "All RFDs valid"
+
+  index:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate RFD index
+        run: |
+          echo "number,title,state,authors,discussion" > rfd.csv
+
+          for dir in rfd/[0-9]*/; do
+            [ -d "$dir" ] || continue
+            padded=$(basename "$dir")
+
+            file=""
+            if [ -f "$dir/README.md" ]; then
+              file="$dir/README.md"
+            elif [ -f "$dir/README.adoc" ]; then
+              file="$dir/README.adoc"
+            else
+              continue
+            fi
+
+            # Extract fields
+            state=$(sed -n '/^---$/,/^---$/p' "$file" | grep '^state:' | head -1 | sed 's/^state:[[:space:]]*//')
+            authors=$(sed -n '/^---$/,/^---$/p' "$file" | grep '^authors:' | head -1 | sed 's/^authors:[[:space:]]*//' | sed 's/,/;/g')
+            discussion=$(sed -n '/^---$/,/^---$/p' "$file" | grep '^discussion:' | head -1 | sed 's/^discussion:[[:space:]]*//')
+            title=$(sed '1,/^---$/d' "$file" | sed '/^---$/d' | grep -m1 '^#' | sed 's/^#\+[[:space:]]*//' | sed 's/,/;/g')
+
+            echo "$padded,\"$title\",$state,\"$authors\",$discussion" >> rfd.csv
+          done
+
+      - name: Commit index if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add rfd.csv
+          git diff --cached --quiet || git commit -m "chore: update RFD index"
+          git push

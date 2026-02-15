@@ -1,0 +1,11 @@
+# OpenRFD Configuration
+# See README.md for details.
+
+# Default format for new RFDs: md or adoc
+RFD_DEFAULT_FORMAT=md
+
+# Main branch name (main or master)
+RFD_MAIN_BRANCH=main
+
+# Zero-pad width for RFD numbers
+RFD_PAD_WIDTH=4
