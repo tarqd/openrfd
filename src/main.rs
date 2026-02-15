@@ -1,18 +1,3 @@
-mod annotation;
-mod build;
-mod config;
-mod import;
-mod index;
-mod refs;
-mod render;
-mod repo;
-mod rfd;
-mod search;
-mod selector;
-mod source_map;
-mod state;
-mod validate;
-
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -21,10 +6,11 @@ use chrono::Utc;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
-use crate::annotation::*;
-use crate::config::Config;
-use crate::rfd::{find_rfd_file, next_rfd_number, Rfd};
-use crate::state::{State, Visibility};
+use openrfd::annotation::*;
+use openrfd::config::Config;
+use openrfd::rfd::{find_rfd_file, next_rfd_number, Rfd};
+use openrfd::state::{State, Visibility};
+use openrfd::{build, import, index, refs, repo, search, selector, source_map, validate};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
