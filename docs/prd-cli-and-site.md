@@ -90,9 +90,11 @@ never contains internal or confidential content, even in git history.
 - **Template engine**: [Tera][tera] (Jinja2-like, Rust-native)
 - **Markdown rendering**: [pulldown-cmark][pulldown] with source span tracking
 - **Styling**: Single CSS file, no framework
-- **Client-side JS**: Minimal vanilla JavaScript (~5KB) for:
+- **Client-side JS**: Minimal vanilla JavaScript (~15-20KB) for:
   - Annotation sidebar toggle and highlight linking
   - Comment creation via text selection
+  - GitHub OAuth (device flow + PKCE)
+  - Live PR discussion rendering
   - Jump-to-RFD menu (Cmd+K)
   - Client-side search against pre-built JSON index
 - **Search**: Pre-built JSON index at build time, [minisearch][minisearch]
@@ -162,13 +164,19 @@ additional server infrastructure is required.
 
 ### GitHub OAuth (Client-Side)
 
-The site uses the GitHub OAuth [device flow][device-flow] or a GitHub App
-installation to authenticate users directly from the browser. The OAuth app is
-configured in `.rfdconfig`:
+The site supports two OAuth flows, both configured in `rfd.toml`:
+
+- **Device flow** (default): Works on any static host with zero configuration.
+  The user visits github.com/login/device and enters a code. No client secret
+  needed.
+- **PKCE web flow**: Smooth redirect-based login. Enabled when `redirect_uri`
+  is set in `rfd.toml`. Requires the deploy URL to be pre-registered in the
+  GitHub App settings.
 
 ```toml
 [github]
 app_client_id = "Iv1.abc123"    # GitHub OAuth App or GitHub App client ID
+# redirect_uri = "https://rfd.example.com/callback"  # Enables PKCE if set
 ```
 
 On login the frontend receives a token scoped to the repository. All subsequent
@@ -277,7 +285,7 @@ openrfd/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs              # CLI entrypoint (clap)
-│   ├── config.rs            # .rfdconfig parsing
+│   ├── config.rs            # rfd.toml parsing
 │   ├── rfd.rs               # RFD struct: frontmatter parsing, serialization
 │   ├── state.rs             # Lifecycle state enum and transitions
 │   ├── repo.rs              # Git operations (git2), branch/PR workflow
@@ -313,10 +321,11 @@ openrfd/
 | `pulldown-cmark` | Markdown parsing with source spans       |
 | `tera`         | HTML template rendering                    |
 | `git2`         | Git operations (libgit2 bindings)          |
-| `octocrab`     | GitHub API (PR comments import)            |
-| `minijinja`    | Alternative to Tera if lighter weight needed |
+| `toml`         | `rfd.toml` configuration parsing           |
 | `axum`         | Local dev server for `rfd serve`           |
 | `similar`      | Diff algorithm for annotation re-anchoring |
+| `uuid`         | Annotation ID generation                   |
+| `colored`      | Terminal output formatting                 |
 
 ### Core Types
 

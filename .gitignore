@@ -8,3 +8,10 @@ Thumbs.db
 *~
 .vscode/
 .idea/
+
+# Rust
+/target/
+Cargo.lock
+
+# Build output
+/_site/

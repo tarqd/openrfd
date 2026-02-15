@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}RFD Index — OpenRFD{% endblock %}
+
+{% block content %}
+<div class="index-page">
+  <h1>Requests for Discussion</h1>
+
+  <div class="index-controls">
+    <select id="state-filter" aria-label="Filter by state">
+      <option value="">All states</option>
+      <option value="prediscussion">Prediscussion</option>
+      <option value="ideation">Ideation</option>
+      <option value="discussion">Discussion</option>
+      <option value="published">Published</option>
+      <option value="committed">Committed</option>
+      <option value="abandoned">Abandoned</option>
+    </select>
+  </div>
+
+  <table class="rfd-table" id="rfd-table">
+    <thead>
+      <tr>
+        <th class="sortable" data-sort="number">RFD</th>
+        <th class="sortable" data-sort="title">Title</th>
+        <th class="sortable" data-sort="state">State</th>
+        <th class="sortable" data-sort="authors">Authors</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rfd in rfds %}
+      <tr data-state="{{ rfd.state }}">
+        <td><a href="/rfd/{{ rfd.number }}/">{{ rfd.number }}</a></td>
+        <td><a href="/rfd/{{ rfd.number }}/">{{ rfd.title }}</a></td>
+        <td><span class="state-badge state-{{ rfd.state }}">{{ rfd.state }}</span></td>
+        <td>{{ rfd.authors }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if rfds | length == 0 %}
+  <p class="empty-state">No RFDs found.</p>
+  {% endif %}
+</div>
+{% endblock %}

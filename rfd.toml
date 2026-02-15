@@ -1,0 +1,7 @@
+[rfd]
+default_format = "md"
+main_branch = "main"
+pad_width = 4
+
+[github]
+app_client_id = ""

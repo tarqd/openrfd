@@ -89,7 +89,7 @@ project/
 ├── static/
 │   ├── style.css
 │   └── rfd.js                     # Minimal vanilla JS
-├── .rfdconfig                     # Repository configuration
+├── rfd.toml                       # Repository configuration
 ├── .github/
 │   └── workflows/
 │       └── rfd.yml                # CI: validate + build + deploy
