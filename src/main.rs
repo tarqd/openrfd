@@ -139,6 +139,16 @@ enum Commands {
         annotation_id: String,
     },
 
+    /// Edit an annotation's body text
+    EditAnnotation {
+        /// RFD number
+        number: u32,
+        /// Annotation ID
+        annotation_id: String,
+        /// New body text
+        comment: String,
+    },
+
     /// Generate static site
     Build {
         /// Only include public RFDs
@@ -240,6 +250,9 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
         Commands::Sync { number, pr } => cmd_sync(repo_root, config, number, pr),
         Commands::Resolve { number, annotation_id } => {
             cmd_resolve(repo_root, config, number, &annotation_id)
+        }
+        Commands::EditAnnotation { number, annotation_id, comment } => {
+            cmd_edit_annotation(repo_root, config, number, &annotation_id, &comment)
         }
         Commands::Build { public, internal } => {
             let filter = if public {
@@ -1075,6 +1088,46 @@ fn cmd_resolve(
                 &format!("Resolve annotation in RFD {}", padded),
             )?;
             eprintln!("Resolved annotation: {}", annotation_id);
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("annotation {} not found in RFD {}", annotation_id, padded);
+}
+
+fn cmd_edit_annotation(
+    repo_root: &Path,
+    config: &Config,
+    number: u32,
+    annotation_id: &str,
+    new_body: &str,
+) -> Result<()> {
+    let padded = config.pad_number(number);
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
+
+    let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
+
+    for (filename, mut collection) in collections {
+        let mut found = false;
+        for annotation in &mut collection.items {
+            if annotation.id == annotation_id {
+                annotation.body.value = new_body.to_string();
+                annotation.modified = Some(Utc::now());
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            let path = format!("annotations/{}", filename);
+            collection.save_to_ref(
+                &repo,
+                &ref_name,
+                &path,
+                &format!("Edit annotation in RFD {}", padded),
+            )?;
+            eprintln!("Updated annotation: {}", annotation_id);
             return Ok(());
         }
     }
