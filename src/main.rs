@@ -65,11 +65,12 @@ enum Commands {
         state: String,
     },
 
-    /// Open a pull request for discussion
-    #[command(alias = "pr")]
+    /// Move an RFD to discussion state and set its discussion link
     Discuss {
         /// RFD number
         number: u32,
+        /// Discussion link (e.g. mailing-list thread, forum post, PR URL)
+        link: Option<String>,
     },
 
     /// Publish an RFD (merge to main)
@@ -222,7 +223,7 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
         Commands::Show { number } => cmd_show(repo_root, config, number),
         Commands::Edit { number } => cmd_edit(repo_root, config, number),
         Commands::State { number, state } => cmd_state(repo_root, config, number, &state),
-        Commands::Discuss { number } => cmd_discuss(repo_root, config, number),
+        Commands::Discuss { number, link } => cmd_discuss(repo_root, config, number, link),
         Commands::Publish { number } => cmd_publish(repo_root, config, number),
         Commands::Search { query } => cmd_search(repo_root, config, &query),
         Commands::Validate { number } => cmd_validate(repo_root, config, number),
@@ -384,7 +385,7 @@ fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
     eprintln!("Next steps:");
     eprintln!("  1. Edit {}", file_path.display());
     eprintln!("  2. git add -A && git commit -m \"RFD {}: {}\"", padded, title);
-    eprintln!("  3. rfd discuss {}   # open a pull request", num);
+    eprintln!("  3. rfd discuss {} <link>   # move to discussion", num);
 
     Ok(())
 }
@@ -676,15 +677,25 @@ fn cmd_state(repo_root: &Path, config: &Config, number: u32, new_state: &str) ->
     Ok(())
 }
 
-fn cmd_discuss(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
+fn cmd_discuss(
+    repo_root: &Path,
+    config: &Config,
+    number: u32,
+    link: Option<String>,
+) -> Result<()> {
     let padded = config.pad_number(number);
     let branch = config.branch_name(number);
 
-    // Switch to branch
+    // Must be on the RFD branch
     let current = repo::current_branch(repo_root)?;
     if current != branch {
-        eprintln!("Switching to branch {}", branch);
-        repo::checkout(repo_root, &branch)?;
+        anyhow::bail!(
+            "not on branch {}\n\n  \
+             Switch to the RFD branch first:\n    \
+             git checkout {}",
+            branch,
+            branch
+        );
     }
 
     let dir = config.rfd_path(repo_root, number);
@@ -692,126 +703,37 @@ fn cmd_discuss(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("RFD {} not found on branch {}", number, branch))?;
 
     let rfd = Rfd::load(&file)?;
-    let title = rfd.title();
+    let mut changed = false;
 
     // Update state to discussion
     if rfd.frontmatter.state != State::Discussion {
         Rfd::set_field(&file, "state", "discussion")?;
+        changed = true;
+    }
+
+    // Set discussion link if provided
+    if let Some(ref url) = link {
+        Rfd::set_field(&file, "discussion", url)?;
+        changed = true;
+    }
+
+    if changed {
         let rel_path = file.strip_prefix(repo_root)?.to_string_lossy().to_string();
-        repo::commit(
-            repo_root,
-            &[&rel_path],
-            &format!("rfd: move RFD {} to discussion", padded),
-        )?;
+        let msg = match &link {
+            Some(_) => format!("rfd: move RFD {} to discussion with link", padded),
+            None => format!("rfd: move RFD {} to discussion", padded),
+        };
+        repo::commit(repo_root, &[&rel_path], &msg)?;
     }
 
-    // Push branch
-    eprintln!("Pushing branch {}...", branch);
-    repo::push(repo_root, &branch)?;
-
-    // Try to create PR via gh CLI
-    let gh_available = std::process::Command::new("gh")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if !gh_available {
-        eprintln!();
-        eprintln!("GitHub CLI (gh) not found. Create a PR manually:");
-        eprintln!("  Branch: {} -> {}", branch, config.rfd.main_branch);
-        eprintln!("  Title: RFD {}: {}", padded, title);
-        return Ok(());
+    eprintln!("RFD {} is now in discussion state", padded);
+    if let Some(url) = &link {
+        eprintln!("Discussion: {}", url);
+    } else if rfd.frontmatter.discussion.is_some() {
+        // Already had a link, we didn't touch it
+    } else {
+        eprintln!("Tip: set a discussion link with `rfd discuss {} <url>`", number);
     }
-
-    // Check for existing PR
-    let existing = std::process::Command::new("gh")
-        .current_dir(repo_root)
-        .args(["pr", "list", "--head", &branch, "--json", "url", "--jq", ".[0].url"])
-        .output()?;
-    let existing_url = String::from_utf8(existing.stdout)?.trim().to_string();
-
-    if !existing_url.is_empty() {
-        eprintln!();
-        eprintln!("PR already exists: {}", existing_url);
-
-        // Update discussion link
-        Rfd::set_field(&file, "discussion", &existing_url)?;
-        let rel_path = file.strip_prefix(repo_root)?.to_string_lossy().to_string();
-        if repo::has_staged_changes(repo_root) || {
-            // Check if file changed
-            let output = std::process::Command::new("git")
-                .current_dir(repo_root)
-                .args(["diff", "--name-only", &rel_path])
-                .output()?;
-            !String::from_utf8(output.stdout)?.trim().is_empty()
-        } {
-            repo::commit(
-                repo_root,
-                &[&rel_path],
-                &format!("rfd: update RFD {} discussion link", padded),
-            )?;
-            repo::push(repo_root, &branch)?;
-        }
-        return Ok(());
-    }
-
-    // Create PR
-    let pr_body = format!(
-        "Discussion for RFD {}: **{}**\n\n\
-         This pull request is for discussing RFD {}. Please leave comments and feedback here.\n\n\
-         **State**: discussion\n\n\
-         ---\n\
-         *Created with [OpenRFD](https://github.com/openrfd/openrfd)*",
-        padded, title, padded
-    );
-
-    let output = std::process::Command::new("gh")
-        .current_dir(repo_root)
-        .args([
-            "pr",
-            "create",
-            "--base",
-            &config.rfd.main_branch,
-            "--head",
-            &branch,
-            "--title",
-            &format!("RFD {}: {}", padded, title),
-            "--body",
-            &pr_body,
-        ])
-        .output()
-        .context("failed to create PR")?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("failed to create PR: {}", err);
-    }
-
-    let pr_url = String::from_utf8(output.stdout)?.trim().to_string();
-    eprintln!();
-    eprintln!("Created PR: {}", pr_url);
-
-    // Update discussion link and push
-    Rfd::set_field(&file, "discussion", &pr_url)?;
-    let rel_path = file.strip_prefix(repo_root)?.to_string_lossy().to_string();
-    repo::commit(
-        repo_root,
-        &[&rel_path],
-        &format!("rfd: add discussion link to RFD {}", padded),
-    )?;
-    repo::push(repo_root, &branch)?;
-
-    // Record discussion on the ref
-    let repo = refs::open_repo(repo_root)?;
-    let ref_name = config.ref_name(number);
-    refs::write_commit(
-        &repo,
-        &ref_name,
-        &format!("State: discussion\n\nDiscussion: {}", pr_url),
-        &[],
-        &[],
-    )?;
 
     Ok(())
 }

@@ -172,12 +172,3 @@ pub fn merge(repo_root: &Path, branch: &str, message: &str) -> Result<()> {
     Ok(())
 }
 
-/// Check if there are staged changes.
-pub fn has_staged_changes(repo_root: &Path) -> bool {
-    Command::new("git")
-        .current_dir(repo_root)
-        .args(["diff", "--cached", "--quiet"])
-        .output()
-        .map(|o| !o.status.success())
-        .unwrap_or(false)
-}
