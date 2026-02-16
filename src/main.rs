@@ -152,6 +152,13 @@ enum Commands {
         port: u16,
     },
 
+    /// Git post-commit hook — updates RFD metadata refs
+    ///
+    /// Wire this into `.git/hooks/post-commit`:
+    ///   #!/bin/sh
+    ///   rfd post-commit
+    PostCommit,
+
     /// Show or update configuration
     Config {
         /// Config key to set
@@ -237,6 +244,7 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
             };
             build::build_site(repo_root, config, filter)
         }
+        Commands::PostCommit => cmd_post_commit(repo_root, config),
         Commands::Config { key, value } => cmd_config(repo_root, config, key, value),
         _ => Ok(()),
     }
@@ -361,36 +369,95 @@ fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
         std::fs::write(&file_path, content)?;
     }
 
-    // Commit to working branch
-    let rel_path = file_path.strip_prefix(repo_root)?.to_string_lossy().to_string();
-    repo::commit(
-        repo_root,
-        &[&rel_path],
-        &format!("rfd: reserve RFD {} — {}", padded, title),
-    )?;
-
-    // Create the ref for this RFD (NoteDb-style metadata store)
-    let repo = refs::open_repo(repo_root)?;
-    let ref_name = config.ref_name(num);
-    let content = std::fs::read(&file_path)?;
-    refs::create_ref(
-        &repo,
-        &ref_name,
-        &format!("Reserve RFD {} — {}\n\nState: prediscussion", padded, title),
-        &[refs::TreeEntry {
-            path: "README.md".into(),
-            content,
-        }],
-    )?;
-
     eprintln!();
     eprintln!("Created {}", file_path.display());
     eprintln!("Branch: {}", branch);
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Edit {}", file_path.display());
-    eprintln!("  2. git add && git commit");
+    eprintln!("  2. git add -A && git commit -m \"RFD {}: {}\"", padded, title);
     eprintln!("  3. rfd discuss {}   # open a pull request", num);
+
+    Ok(())
+}
+
+/// Git post-commit hook: scan the last commit for changed RFD files and
+/// create or update the corresponding NoteDb metadata refs.
+fn cmd_post_commit(repo_root: &Path, config: &Config) -> Result<()> {
+    // List files changed in HEAD commit, relative to repo root.
+    let output = std::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["diff-tree", "--no-commit-id", "-r", "--name-only", "HEAD"])
+        .output()
+        .context("failed to list changed files in HEAD commit")?;
+
+    if !output.status.success() {
+        // Probably an initial commit or detached HEAD — nothing to do.
+        return Ok(());
+    }
+
+    let changed = String::from_utf8(output.stdout)?;
+    let rfd_dir = config.rfd_dir(repo_root);
+    let repo = refs::open_repo(repo_root)?;
+
+    for line in changed.lines() {
+        let path = Path::new(line);
+
+        // Match paths like  rfd/NNNN/README.md
+        let components: Vec<_> = path.components().collect();
+        if components.len() < 3 {
+            continue;
+        }
+        let first = components[0].as_os_str().to_str().unwrap_or("");
+        let second = components[1].as_os_str().to_str().unwrap_or("");
+        if first != "rfd" {
+            continue;
+        }
+        let num: u32 = match second.parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        let rfd_path = rfd_dir.join(second);
+        let file = match find_rfd_file(&rfd_path) {
+            Some(f) => f,
+            None => continue,
+        };
+
+        let rfd = match Rfd::load(&file) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let padded = config.pad_number(num);
+        let ref_name = config.ref_name(num);
+        let content = std::fs::read(&file)?;
+        let state = rfd.frontmatter.state;
+
+        let entries = vec![refs::TreeEntry {
+            path: "README.md".into(),
+            content,
+        }];
+
+        if refs::ref_exists(&repo, &ref_name) {
+            refs::write_commit(
+                &repo,
+                &ref_name,
+                &format!("Snapshot RFD {}\n\nState: {}", padded, state),
+                &entries,
+                &[],
+            )?;
+        } else {
+            refs::create_ref(
+                &repo,
+                &ref_name,
+                &format!("Reserve RFD {}\n\nState: {}", padded, state),
+                &entries,
+            )?;
+        }
+
+        eprintln!("rfd post-commit: updated refs/rfd/{}", padded);
+    }
 
     Ok(())
 }
