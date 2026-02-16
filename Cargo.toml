@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+tempfile = "3"
 axum = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -39,7 +40,6 @@ uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 
 [dev-dependencies]
-tempfile = "3"
 
 [profile.release]
 lto = true

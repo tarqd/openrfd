@@ -1,3 +1,4 @@
+use std::io::{IsTerminal, Read as _};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -94,59 +95,13 @@ enum Commands {
     /// Regenerate the RFD index (rfd.csv)
     Index,
 
-    /// Add an annotation to an RFD
-    Annotate {
+    /// Manage annotations on an RFD
+    #[command(alias = "annotations")]
+    Annotation {
         /// RFD number
         number: u32,
-        /// Quoted text to annotate
-        #[arg(long)]
-        quote: String,
-        /// Comment body
-        comment: String,
-    },
-
-    /// List or check annotations for an RFD
-    Annotations {
-        /// RFD number
-        number: u32,
-        /// Check annotation health
-        #[arg(long)]
-        check: bool,
-        /// Re-anchor stale annotations
-        #[arg(long)]
-        reanchor: bool,
-    },
-
-    /// Sync PR review comments into the annotation database
-    ///
-    /// Merges GitHub's current state with local annotations: new comments
-    /// are added, edited comments are updated, and local state (resolved)
-    /// is preserved. If --pr is omitted, discovers the PR automatically
-    /// from the rfd/NNNN branch.
-    Sync {
-        /// RFD number
-        number: u32,
-        /// PR number (auto-discovered from branch if omitted)
-        #[arg(long)]
-        pr: Option<u32>,
-    },
-
-    /// Mark an annotation as resolved
-    Resolve {
-        /// RFD number
-        number: u32,
-        /// Annotation ID
-        annotation_id: String,
-    },
-
-    /// Edit an annotation's body text
-    EditAnnotation {
-        /// RFD number
-        number: u32,
-        /// Annotation ID
-        annotation_id: String,
-        /// New body text
-        comment: String,
+        #[command(subcommand)]
+        action: AnnotationCmd,
     },
 
     /// Generate static site
@@ -182,6 +137,88 @@ enum Commands {
         key: Option<String>,
         /// Value to set
         value: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AnnotationCmd {
+    /// Add an annotation to an RFD
+    Add {
+        /// Quoted text to annotate
+        #[arg(long)]
+        quote: String,
+        /// Comment body
+        comment: String,
+    },
+
+    /// Remove an annotation
+    #[command(alias = "rm")]
+    Remove {
+        /// Annotation ID
+        annotation_id: String,
+    },
+
+    /// Mark an annotation as resolved
+    Resolve {
+        /// Annotation ID
+        annotation_id: String,
+    },
+
+    /// Clear an annotation's resolved status
+    Unresolve {
+        /// Annotation ID
+        annotation_id: String,
+    },
+
+    /// Low-level field update (plumbing)
+    ///
+    /// Set individual annotation fields by name. Settable fields:
+    /// body, created, modified, resolved, motivation.
+    Update {
+        /// Annotation ID
+        annotation_id: String,
+        /// Field name to set
+        #[arg(long)]
+        set: String,
+        /// Value to set (use "null" to clear optional fields)
+        #[arg(long)]
+        value: String,
+    },
+
+    /// Edit an annotation's body text
+    ///
+    /// Body source (in priority order):
+    ///   1. <comment> argument if provided
+    ///   2. stdin if it is not a terminal
+    ///   3. $RFD_EDITOR, $VISUAL, or $EDITOR (first found)
+    Edit {
+        /// Annotation ID
+        annotation_id: String,
+        /// New body text (omit to use stdin or $EDITOR)
+        comment: Option<String>,
+    },
+
+    /// List annotations
+    #[command(alias = "ls")]
+    List {
+        /// Check annotation health
+        #[arg(long)]
+        check: bool,
+        /// Re-anchor stale annotations
+        #[arg(long)]
+        reanchor: bool,
+    },
+
+    /// Sync PR review comments into the annotation database
+    ///
+    /// Merges GitHub's current state with local annotations: new comments
+    /// are added, edited comments are updated, and local state (resolved)
+    /// is preserved. If --pr is omitted, discovers the PR automatically
+    /// from the rfd/NNNN branch.
+    Sync {
+        /// PR number (auto-discovered from branch if omitted)
+        #[arg(long)]
+        pr: Option<u32>,
     },
 }
 
@@ -241,18 +278,8 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
         Commands::Search { query } => cmd_search(repo_root, config, &query),
         Commands::Validate { number } => cmd_validate(repo_root, config, number),
         Commands::Index => cmd_index(repo_root, config),
-        Commands::Annotate { number, quote, comment } => {
-            cmd_annotate(repo_root, config, number, &quote, &comment)
-        }
-        Commands::Annotations { number, check, reanchor } => {
-            cmd_annotations(repo_root, config, number, check, reanchor)
-        }
-        Commands::Sync { number, pr } => cmd_sync(repo_root, config, number, pr),
-        Commands::Resolve { number, annotation_id } => {
-            cmd_resolve(repo_root, config, number, &annotation_id)
-        }
-        Commands::EditAnnotation { number, annotation_id, comment } => {
-            cmd_edit_annotation(repo_root, config, number, &annotation_id, &comment)
+        Commands::Annotation { number, action } => {
+            run_annotation_cmd(action, repo_root, config, number)
         }
         Commands::Build { public, internal } => {
             let filter = if public {
@@ -852,6 +879,38 @@ fn cmd_index(repo_root: &Path, config: &Config) -> Result<()> {
     index::generate_csv_index(repo_root, config)
 }
 
+fn run_annotation_cmd(
+    action: AnnotationCmd,
+    repo_root: &Path,
+    config: &Config,
+    number: u32,
+) -> Result<()> {
+    match action {
+        AnnotationCmd::Add { quote, comment } => {
+            cmd_annotate(repo_root, config, number, &quote, &comment)
+        }
+        AnnotationCmd::Remove { annotation_id } => {
+            cmd_remove_annotation(repo_root, config, number, &annotation_id)
+        }
+        AnnotationCmd::Resolve { annotation_id } => {
+            cmd_resolve_annotation(repo_root, config, number, &annotation_id, true)
+        }
+        AnnotationCmd::Unresolve { annotation_id } => {
+            cmd_resolve_annotation(repo_root, config, number, &annotation_id, false)
+        }
+        AnnotationCmd::Update { annotation_id, set, value } => {
+            cmd_update_annotation(repo_root, config, number, &annotation_id, &set, &value)
+        }
+        AnnotationCmd::Edit { annotation_id, comment } => {
+            cmd_edit_annotation(repo_root, config, number, &annotation_id, comment.as_deref())
+        }
+        AnnotationCmd::List { check, reanchor } => {
+            cmd_annotations(repo_root, config, number, check, reanchor)
+        }
+        AnnotationCmd::Sync { pr } => cmd_sync(repo_root, config, number, pr),
+    }
+}
+
 fn cmd_annotate(
     repo_root: &Path,
     config: &Config,
@@ -1045,7 +1104,7 @@ fn cmd_sync(
                     anyhow::anyhow!(
                         "no open PR found with head branch {}\n\n  \
                          Specify the PR number explicitly:\n    \
-                         rfd sync {} --pr <number>",
+                         rfd annotation {} sync --pr <number>",
                         config.branch_name(number),
                         number
                     )
@@ -1057,7 +1116,7 @@ fn cmd_sync(
     Ok(())
 }
 
-fn cmd_resolve(
+fn cmd_remove_annotation(
     repo_root: &Path,
     config: &Config,
     number: u32,
@@ -1070,10 +1129,127 @@ fn cmd_resolve(
     let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
 
     for (filename, mut collection) in collections {
+        let before = collection.items.len();
+        collection.items.retain(|a| a.id != annotation_id);
+
+        if collection.items.len() < before {
+            let path = format!("annotations/{}", filename);
+            collection.save_to_ref(
+                &repo,
+                &ref_name,
+                &path,
+                &format!("Remove annotation in RFD {}", padded),
+            )?;
+            eprintln!("Removed annotation: {}", annotation_id);
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("annotation {} not found in RFD {}", annotation_id, padded);
+}
+
+fn cmd_resolve_annotation(
+    repo_root: &Path,
+    config: &Config,
+    number: u32,
+    annotation_id: &str,
+    resolve: bool,
+) -> Result<()> {
+    let padded = config.pad_number(number);
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
+
+    let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
+
+    for (filename, mut collection) in collections {
         let mut found = false;
         for annotation in &mut collection.items {
             if annotation.id == annotation_id {
-                annotation.resolved = Some(Utc::now());
+                if resolve {
+                    annotation.resolved = Some(Utc::now());
+                } else {
+                    annotation.resolved = None;
+                }
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            let verb = if resolve { "Resolve" } else { "Unresolve" };
+            let path = format!("annotations/{}", filename);
+            collection.save_to_ref(
+                &repo,
+                &ref_name,
+                &path,
+                &format!("{} annotation in RFD {}", verb, padded),
+            )?;
+            eprintln!("{}d annotation: {}", verb, annotation_id);
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("annotation {} not found in RFD {}", annotation_id, padded);
+}
+
+fn cmd_update_annotation(
+    repo_root: &Path,
+    config: &Config,
+    number: u32,
+    annotation_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<()> {
+    let padded = config.pad_number(number);
+    let repo = refs::open_repo(repo_root)?;
+    let ref_name = config.ref_name(number);
+
+    let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
+
+    for (filename, mut collection) in collections {
+        let mut found = false;
+        for annotation in &mut collection.items {
+            if annotation.id == annotation_id {
+                match field {
+                    "body" => {
+                        annotation.body.value = value.to_string();
+                        annotation.modified = Some(Utc::now());
+                    }
+                    "created" => {
+                        annotation.created = value.parse::<chrono::DateTime<Utc>>()
+                            .context("invalid datetime for 'created' (expected RFC 3339)")?;
+                    }
+                    "modified" => {
+                        if value == "null" {
+                            annotation.modified = None;
+                        } else {
+                            annotation.modified = Some(
+                                value.parse::<chrono::DateTime<Utc>>()
+                                    .context("invalid datetime for 'modified' (expected RFC 3339)")?,
+                            );
+                        }
+                    }
+                    "resolved" => {
+                        if value == "null" {
+                            annotation.resolved = None;
+                        } else {
+                            annotation.resolved = Some(
+                                value.parse::<chrono::DateTime<Utc>>()
+                                    .context("invalid datetime for 'resolved' (expected RFC 3339)")?,
+                            );
+                        }
+                    }
+                    "motivation" => {
+                        annotation.motivation = serde_json::from_value(
+                            serde_json::Value::String(value.to_string()),
+                        )
+                        .context("invalid motivation (commenting, replying, questioning, suggesting, editing)")?;
+                    }
+                    other => anyhow::bail!(
+                        "unknown field: {}\n\n  Settable fields: body, created, modified, resolved, motivation",
+                        other
+                    ),
+                }
                 found = true;
                 break;
             }
@@ -1085,9 +1261,9 @@ fn cmd_resolve(
                 &repo,
                 &ref_name,
                 &path,
-                &format!("Resolve annotation in RFD {}", padded),
+                &format!("Update annotation {} in RFD {}", field, padded),
             )?;
-            eprintln!("Resolved annotation: {}", annotation_id);
+            eprintln!("Updated {}: {}", field, annotation_id);
             return Ok(());
         }
     }
@@ -1100,8 +1276,60 @@ fn cmd_edit_annotation(
     config: &Config,
     number: u32,
     annotation_id: &str,
-    new_body: &str,
+    comment: Option<&str>,
 ) -> Result<()> {
+    // Resolve body text from argument, stdin, or editor
+    let new_body = if let Some(text) = comment {
+        text.to_string()
+    } else if !std::io::stdin().is_terminal() {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)
+            .context("failed to read from stdin")?;
+        buf
+    } else {
+        // Find the current body to seed the editor
+        let repo = refs::open_repo(repo_root)?;
+        let ref_name = config.ref_name(number);
+        let collections = AnnotationCollection::load_all_from_ref(&repo, &ref_name)?;
+        let current_body = collections.iter()
+            .flat_map(|(_, c)| c.items.iter())
+            .find(|a| a.id == annotation_id)
+            .map(|a| a.body.value.clone())
+            .unwrap_or_default();
+
+        let editor = std::env::var("RFD_EDITOR")
+            .or_else(|_| std::env::var("VISUAL"))
+            .or_else(|_| std::env::var("EDITOR"))
+            .map_err(|_| anyhow::anyhow!(
+                "no editor found\n\n  Set one of: $RFD_EDITOR, $VISUAL, $EDITOR"
+            ))?;
+
+        let mut tmp = tempfile::Builder::new()
+            .prefix("rfd-annotation-")
+            .suffix(".md")
+            .tempfile()
+            .context("failed to create temp file")?;
+        std::io::Write::write_all(&mut tmp, current_body.as_bytes())
+            .context("failed to write temp file")?;
+        let tmp_path = tmp.path().to_path_buf();
+
+        let status = std::process::Command::new(&editor)
+            .arg(&tmp_path)
+            .status()
+            .with_context(|| format!("failed to run editor '{}'", editor))?;
+
+        if !status.success() {
+            anyhow::bail!("editor exited with non-zero status, annotation unchanged");
+        }
+
+        std::fs::read_to_string(&tmp_path)
+            .context("failed to read back edited file")?
+    };
+
+    if new_body.trim().is_empty() {
+        anyhow::bail!("empty body, annotation unchanged");
+    }
+
     let padded = config.pad_number(number);
     let repo = refs::open_repo(repo_root)?;
     let ref_name = config.ref_name(number);
@@ -1112,7 +1340,7 @@ fn cmd_edit_annotation(
         let mut found = false;
         for annotation in &mut collection.items {
             if annotation.id == annotation_id {
-                annotation.body.value = new_body.to_string();
+                annotation.body.value = new_body.clone();
                 annotation.modified = Some(Utc::now());
                 found = true;
                 break;
