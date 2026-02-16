@@ -306,26 +306,12 @@ What other approaches were considered? Why were they not chosen?
     // Write default static assets
     write_default_static_assets(&cwd)?;
 
-    // Commit the scaffolding so the tree is clean for `rfd new`
-    repo::commit(
-        &cwd,
-        &[
-            "rfd.toml",
-            "templates/rfd.md",
-            "templates/base.html",
-            "templates/index.html",
-            "templates/rfd.html",
-            "static/style.css",
-            "static/rfd.js",
-        ],
-        "rfd: initialize RFD repository",
-    )?;
-
     eprintln!("Initialized RFD repository in {}", cwd.display());
     eprintln!("  Created rfd/, templates/, static/, and rfd.toml");
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  rfd new \"Your First RFD Title\"");
+    eprintln!("  1. git add -A && git commit -m \"Initialize RFD repository\"");
+    eprintln!("  2. rfd new \"Your First RFD Title\"");
 
     Ok(())
 }
