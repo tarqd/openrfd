@@ -1232,37 +1232,46 @@ fn install_git_hooks(repo_root: &Path) -> Result<()> {
     let hooks: &[(&str, &str)] = &[
         (
             "pre-commit",
-            "# rfd: enforce branch discipline on rfd/* branches\nrfd pre-commit\n",
+            "#!/bin/sh\n# rfd: enforce branch discipline on rfd/* branches\nrfd pre-commit\n",
         ),
         (
             "post-commit",
-            "# rfd: update metadata refs for committed RFDs\nrfd post-commit\n",
+            "#!/bin/sh\n# rfd: update metadata refs for committed RFDs\nrfd post-commit\n",
         ),
     ];
 
-    for (name, snippet) in hooks {
+    // Check for conflicts before writing anything
+    for (name, _) in hooks {
         let path = hooks_dir.join(name);
+        if path.exists() {
+            // .sample files ship with git init — ignore those
+            if name.ends_with(".sample") {
+                continue;
+            }
+            let existing = std::fs::read_to_string(&path)?;
+            if existing.contains("rfd pre-commit") || existing.contains("rfd post-commit") {
+                continue; // already ours
+            }
+            anyhow::bail!(
+                ".git/hooks/{name} already exists\n\n  \
+                 Add the following to your existing hook:\n    \
+                 rfd {name}\n\n  \
+                 Or remove the hook and re-run `rfd init`."
+            );
+        }
+    }
 
+    for (name, content) in hooks {
+        let path = hooks_dir.join(name);
         if path.exists() {
             let existing = std::fs::read_to_string(&path)?;
             if existing.contains("rfd pre-commit") || existing.contains("rfd post-commit") {
-                // Already installed
-                continue;
+                continue; // already installed
             }
-            // Append to existing hook
-            let mut content = existing;
-            if !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push('\n');
-            content.push_str(snippet);
-            std::fs::write(&path, content)?;
-        } else {
-            let content = format!("#!/bin/sh\n{}", snippet);
-            std::fs::write(&path, content)?;
         }
 
-        // Make executable
+        std::fs::write(&path, content)?;
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
