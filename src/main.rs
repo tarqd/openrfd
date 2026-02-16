@@ -117,15 +117,6 @@ enum Commands {
         reanchor: bool,
     },
 
-    /// Import annotations from a GitHub PR
-    ImportAnnotations {
-        /// RFD number
-        number: u32,
-        /// PR number
-        #[arg(long)]
-        pr: u32,
-    },
-
     /// Sync PR review comments into the annotation database
     ///
     /// Merges GitHub's current state with local annotations: new comments
@@ -246,7 +237,6 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
         Commands::Annotations { number, check, reanchor } => {
             cmd_annotations(repo_root, config, number, check, reanchor)
         }
-        Commands::ImportAnnotations { number, pr } => cmd_import_annotations(repo_root, config, number, pr),
         Commands::Sync { number, pr } => cmd_sync(repo_root, config, number, pr),
         Commands::Resolve { number, annotation_id } => {
             cmd_resolve(repo_root, config, number, &annotation_id)
@@ -1024,18 +1014,6 @@ fn cmd_annotations(
         eprintln!("{} annotation(s) total", total);
     }
 
-    Ok(())
-}
-
-fn cmd_import_annotations(
-    repo_root: &Path,
-    config: &Config,
-    number: u32,
-    pr: u32,
-) -> Result<()> {
-    // Legacy one-shot import — prefer `rfd sync` for incremental updates.
-    // Delegates to sync so existing invocations get the merge behavior.
-    import::sync_pr_annotations(repo_root, config, number, pr)?;
     Ok(())
 }
 
