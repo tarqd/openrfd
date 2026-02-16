@@ -306,6 +306,21 @@ What other approaches were considered? Why were they not chosen?
     // Write default static assets
     write_default_static_assets(&cwd)?;
 
+    // Commit the scaffolding so the tree is clean for `rfd new`
+    repo::commit(
+        &cwd,
+        &[
+            "rfd.toml",
+            "templates/rfd.md",
+            "templates/base.html",
+            "templates/index.html",
+            "templates/rfd.html",
+            "static/style.css",
+            "static/rfd.js",
+        ],
+        "rfd: initialize RFD repository",
+    )?;
+
     eprintln!("Initialized RFD repository in {}", cwd.display());
     eprintln!("  Created rfd/, templates/, static/, and rfd.toml");
     eprintln!();
@@ -316,6 +331,19 @@ What other approaches were considered? Why were they not chosen?
 }
 
 fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
+    // Refuse to create an RFD if there are uncommitted changes — switching
+    // branches with a dirty tree carries those changes over and produces
+    // confusing commits that include unrelated files.
+    if !repo::is_clean(repo_root)? {
+        anyhow::bail!(
+            "working tree has uncommitted changes\n\n  \
+             Commit or stash your changes first, then retry:\n    \
+             git add -A && git commit -m \"save work\"\n    \
+             # or\n    \
+             git stash"
+        );
+    }
+
     let num = next_rfd_number(repo_root);
     let padded = config.pad_number(num);
     let branch = config.branch_name(num);
