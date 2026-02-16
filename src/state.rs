@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostic;
+
 /// RFD lifecycle states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,7 +46,7 @@ impl fmt::Display for State {
 }
 
 impl FromStr for State {
-    type Err = anyhow::Error;
+    type Err = diagnostic::InvalidState;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
@@ -54,15 +56,7 @@ impl FromStr for State {
             "published" => Ok(State::Published),
             "committed" => Ok(State::Committed),
             "abandoned" => Ok(State::Abandoned),
-            other => anyhow::bail!(
-                "invalid state '{}'. Valid states: {}",
-                other,
-                State::ALL
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            other => Err(diagnostic::InvalidState::new(other)),
         }
     }
 }
@@ -94,14 +88,14 @@ impl fmt::Display for Visibility {
 }
 
 impl FromStr for Visibility {
-    type Err = anyhow::Error;
+    type Err = diagnostic::InvalidVisibility;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
             "public" => Ok(Visibility::Public),
             "internal" => Ok(Visibility::Internal),
             "confidential" => Ok(Visibility::Confidential),
-            other => anyhow::bail!("invalid visibility '{}'", other),
+            other => Err(diagnostic::InvalidVisibility::new(other)),
         }
     }
 }
@@ -131,8 +125,10 @@ mod tests {
     fn test_state_from_str_invalid() {
         let err = State::from_str("bogus").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("invalid state 'bogus'"));
-        assert!(msg.contains("prediscussion"));
+        assert!(msg.contains("invalid state"));
+        assert!(msg.contains("bogus"));
+        // Help text contains valid states
+        assert!(err.advice.contains("prediscussion"));
     }
 
     #[test]

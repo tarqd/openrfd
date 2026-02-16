@@ -2,9 +2,11 @@ use std::path::Path;
 
 use anyhow::Result;
 use colored::Colorize;
+use miette::NamedSource;
 
 use crate::annotation::{AnchorHealth, AnnotationCollection};
 use crate::config::Config;
+use crate::diagnostic::ValidationDiagnostic;
 use crate::rfd::{find_rfd_file, Rfd};
 use crate::selector::check_selectors;
 use crate::state::State;
@@ -14,6 +16,8 @@ use crate::state::State;
 pub struct ValidationResult {
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+    /// Rich diagnostics with source context for pretty rendering.
+    pub diagnostics: Vec<ValidationDiagnostic>,
 }
 
 impl ValidationResult {
@@ -25,6 +29,7 @@ impl ValidationResult {
 /// Validate an RFD document.
 pub fn validate_rfd(path: &Path) -> ValidationResult {
     let mut result = ValidationResult::default();
+    let filename = path.display().to_string();
 
     // Check the file exists and is readable
     let content = match std::fs::read_to_string(path) {
@@ -36,8 +41,18 @@ pub fn validate_rfd(path: &Path) -> ValidationResult {
     };
 
     // Check frontmatter exists
-    if !content.trim_start_matches('\u{feff}').starts_with("---") {
+    let trimmed = content.trim_start_matches('\u{feff}');
+    if !trimmed.starts_with("---") {
         result.errors.push("missing YAML frontmatter (file must start with ---)".into());
+        result.diagnostics.push(ValidationDiagnostic {
+            message: "missing YAML frontmatter".into(),
+            src: NamedSource::new(&filename, content.clone()),
+            span: (0, content.len().min(40)).into(),
+            label: "expected `---` here".into(),
+            advice: Some(
+                "add frontmatter at the top of the file:\n\n  ---\n  authors: Your Name\n  state: prediscussion\n  ---".into(),
+            ),
+        });
         return result;
     }
 
@@ -46,19 +61,49 @@ pub fn validate_rfd(path: &Path) -> ValidationResult {
         Ok(r) => r,
         Err(e) => {
             result.errors.push(format!("invalid frontmatter: {}", e));
+            // The parse error itself is already a diagnostic; push a summary
+            // so the caller can also render the original diagnostic via the chain.
             return result;
         }
     };
 
+    // Find frontmatter span for pointing at specific fields
+    let fm_end = trimmed
+        .find("\n---")
+        .map(|i| i + 4) // include "\n---"
+        .unwrap_or(0);
+    let fm_content = &trimmed[..fm_end];
+
     // Check required fields
     match &rfd.frontmatter.authors {
         Some(authors) if !authors.trim().is_empty() => {}
-        _ => result.warnings.push("missing 'authors' field".into()),
+        _ => {
+            result.warnings.push("missing 'authors' field".into());
+            result.diagnostics.push(ValidationDiagnostic {
+                message: "missing 'authors' field".into(),
+                src: NamedSource::new(&filename, content.clone()),
+                span: (0, fm_end).into(),
+                label: "no `authors` field in frontmatter".into(),
+                advice: Some("add `authors: Your Name` to the frontmatter".into()),
+            });
+        }
     }
 
     // Check title
     if rfd.title().is_empty() {
         result.warnings.push("no title heading found".into());
+        let body_offset = fm_content.len();
+        let body_len = content.len().saturating_sub(body_offset).min(80);
+        result.diagnostics.push(ValidationDiagnostic {
+            message: "no title heading found".into(),
+            src: NamedSource::new(&filename, content.clone()),
+            span: (body_offset, body_len.max(1)).into(),
+            label: "expected a markdown heading (e.g. `# RFD 0001 My Title`)".into(),
+            advice: Some(
+                "add a level-1 heading after the frontmatter:\n\n  # RFD NNNN Your Title"
+                    .into(),
+            ),
+        });
     }
 
     // If state is discussion, check for discussion link
@@ -66,6 +111,23 @@ pub fn validate_rfd(path: &Path) -> ValidationResult {
         result
             .warnings
             .push("state is 'discussion' but no discussion link set".into());
+
+        // Point at the state: line in frontmatter
+        let state_span = fm_content
+            .find("state:")
+            .map(|i| (i, "state: discussion".len()))
+            .unwrap_or((0, fm_end));
+        result.diagnostics.push(ValidationDiagnostic {
+            message: "state is 'discussion' but no discussion link set".into(),
+            src: NamedSource::new(&filename, content.clone()),
+            span: state_span.into(),
+            label: "state is discussion".into(),
+            advice: Some(
+                "add `discussion: https://github.com/...` to the frontmatter, \
+                 or run `rfd discuss <number>` to open a PR"
+                    .into(),
+            ),
+        });
     }
 
     result
@@ -110,13 +172,23 @@ pub fn validate_all(repo_root: &Path, config: &Config) -> Result<bool> {
             eprintln!("RFD {}... {}", name_str, "ok".green());
         } else {
             eprintln!("RFD {}...", name_str);
-            for err in &result.errors {
-                eprintln!("  {} {}", "ERROR:".red().bold(), err);
-                total_errors += 1;
-            }
-            for warn in &result.warnings {
-                eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
-                total_warnings += 1;
+
+            // Prefer rich diagnostics when available
+            if !result.diagnostics.is_empty() {
+                for diag in &result.diagnostics {
+                    eprintln!("{:?}", miette::Report::new_boxed(Box::new(diag.clone())));
+                }
+                total_errors += result.errors.len();
+                total_warnings += result.warnings.len();
+            } else {
+                for err in &result.errors {
+                    eprintln!("  {} {}", "ERROR:".red().bold(), err);
+                    total_errors += 1;
+                }
+                for warn in &result.warnings {
+                    eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
+                    total_warnings += 1;
+                }
             }
         }
     }
@@ -223,6 +295,7 @@ mod tests {
         let result = validate_rfd(&path);
         assert!(!result.is_ok());
         assert!(result.errors[0].contains("missing YAML frontmatter"));
+        assert!(!result.diagnostics.is_empty());
     }
 
     #[test]
@@ -235,6 +308,7 @@ mod tests {
         let result = validate_rfd(&path);
         assert!(result.is_ok()); // warnings don't cause errors
         assert!(result.warnings.iter().any(|w| w.contains("authors")));
+        assert!(result.diagnostics.iter().any(|d| d.message.contains("authors")));
     }
 
     #[test]

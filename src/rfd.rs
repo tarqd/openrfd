@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use miette::NamedSource;
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostic::{InvalidFrontmatter, MissingFrontmatter};
 use crate::state::{State, Visibility};
 
 /// YAML frontmatter for an RFD document.
@@ -48,8 +50,8 @@ impl Rfd {
 
     /// Parse an RFD from raw content.
     pub fn parse(number: u32, content: &str, path: PathBuf) -> Result<Self> {
-        let (frontmatter, body) = parse_frontmatter(content)
-            .with_context(|| format!("parsing frontmatter in {}", path.display()))?;
+        let filename = path.display().to_string();
+        let (frontmatter, body) = parse_frontmatter(content, &filename)?;
 
         Ok(Rfd {
             number,
@@ -114,7 +116,7 @@ impl Rfd {
 
 /// Parse YAML frontmatter from markdown content using markdown-rs.
 /// Returns (frontmatter, body_after_frontmatter).
-fn parse_frontmatter(content: &str) -> Result<(Frontmatter, String)> {
+fn parse_frontmatter(content: &str, filename: &str) -> Result<(Frontmatter, String)> {
     let content = content.trim_start_matches('\u{feff}'); // strip BOM
 
     let options = markdown::ParseOptions {
@@ -142,11 +144,44 @@ fn parse_frontmatter(content: &str) -> Result<(Frontmatter, String)> {
         }
     });
 
-    let yaml = yaml_node
-        .ok_or_else(|| anyhow::anyhow!("missing YAML frontmatter (file must start with ---)"))?;
+    let yaml = yaml_node.ok_or_else(|| {
+        let span_len = content.len().min(40);
+        MissingFrontmatter {
+            src: NamedSource::new(filename, content.to_string()),
+            span: (0, span_len).into(),
+        }
+    })?;
 
-    let frontmatter: Frontmatter =
-        serde_yaml::from_str(&yaml.value).context("invalid YAML frontmatter")?;
+    // Byte offset where the YAML content starts inside the document
+    // (after the opening "---\n").
+    let yaml_content_offset = yaml
+        .position
+        .as_ref()
+        .map(|p| p.start.offset)
+        .unwrap_or(0)
+        + 4; // skip `---\n`
+
+    let frontmatter: Frontmatter = serde_yaml::from_str(&yaml.value).map_err(|e| {
+        let (span_offset, span_len) = if let Some(loc) = e.location() {
+            // serde_yaml location index is relative to the yaml string
+            let abs = yaml_content_offset + loc.index();
+            (abs, 1)
+        } else {
+            // Fall back to highlighting the whole yaml block
+            (yaml_content_offset, yaml.value.len())
+        };
+
+        InvalidFrontmatter {
+            src: NamedSource::new(filename, content.to_string()),
+            span: (span_offset, span_len).into(),
+            reason: e.to_string(),
+            advice: Some(
+                "required fields: `state` (prediscussion, ideation, discussion, \
+                 published, committed, abandoned)"
+                    .into(),
+            ),
+        }
+    })?;
 
     // Body is everything after the frontmatter block
     let body = if let Some(pos) = &yaml.position {
@@ -260,7 +295,7 @@ mod tests {
     #[test]
     fn test_parse_frontmatter() {
         let content = "---\nauthors: Jane\nstate: discussion\n---\n\n# RFD 0001 Test\n";
-        let (fm, body) = parse_frontmatter(content).unwrap();
+        let (fm, body) = parse_frontmatter(content, "test.md").unwrap();
         assert_eq!(fm.state, State::Discussion);
         assert_eq!(fm.authors.as_deref(), Some("Jane"));
         assert!(body.contains("# RFD 0001 Test"));

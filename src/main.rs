@@ -8,6 +8,7 @@ use colored::Colorize;
 
 use openrfd::annotation::*;
 use openrfd::config::Config;
+use openrfd::diagnostic;
 use openrfd::rfd::{find_rfd_file, next_rfd_number, Rfd};
 use openrfd::state::{State, Visibility};
 use openrfd::{build, import, index, refs, repo, search, selector, source_map, validate};
@@ -161,23 +162,47 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    // Install miette's fancy graphical error handler
+    miette::set_hook(Box::new(|_| {
+        Box::new(
+            miette::MietteHandlerOpts::new()
+                .terminal_links(true)
+                .unicode(true)
+                .context_lines(2)
+                .tab_width(4)
+                .build(),
+        )
+    }))
+    .ok();
+
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Init => cmd_init()?,
-        Commands::Serve { port } => {
-            let repo_root = repo::find_repo_root()?;
-            build::serve(&repo_root, port).await?;
+    let result: Result<()> = async {
+        match cli.command {
+            Commands::Init => cmd_init()?,
+            Commands::Serve { port } => {
+                let repo_root = repo::find_repo_root()?;
+                build::serve(&repo_root, port).await?;
+            }
+            _ => {
+                let repo_root = repo::find_repo_root()?;
+                let config = Config::load(&repo_root)?;
+                run_command(cli.command, &repo_root, &config)?;
+            }
         }
-        _ => {
-            let repo_root = repo::find_repo_root()?;
-            let config = Config::load(&repo_root)?;
-            run_command(cli.command, &repo_root, &config)?;
-        }
+        Ok(())
     }
+    .await;
 
-    Ok(())
+    if let Err(err) = result {
+        // Try to render a rich miette diagnostic from the error chain
+        if !diagnostic::try_render_diagnostic(&err) {
+            // Fall back to standard anyhow display
+            eprintln!("Error: {:#}", err);
+        }
+        std::process::exit(1);
+    }
 }
 
 fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<()> {
@@ -734,11 +759,18 @@ fn cmd_validate(repo_root: &Path, config: &Config, number: Option<u32>) -> Resul
         eprintln!("Validating RFD {}...", padded);
         let result = validate::validate_rfd(&file);
 
-        for err in &result.errors {
-            eprintln!("  {} {}", "ERROR:".red().bold(), err);
-        }
-        for warn in &result.warnings {
-            eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
+        // Prefer rich diagnostics
+        if !result.diagnostics.is_empty() {
+            for diag in &result.diagnostics {
+                eprintln!("{:?}", miette::Report::new_boxed(Box::new(diag.clone())));
+            }
+        } else {
+            for err in &result.errors {
+                eprintln!("  {} {}", "ERROR:".red().bold(), err);
+            }
+            for warn in &result.warnings {
+                eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
+            }
         }
 
         if result.is_ok() {

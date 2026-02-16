@@ -201,8 +201,18 @@ impl AnnotationCollection {
 
     /// Parse from JSON bytes.
     pub fn from_bytes(data: &[u8]) -> anyhow::Result<Self> {
-        let collection: Self = serde_json::from_slice(data)?;
-        Ok(collection)
+        serde_json::from_slice(data).map_err(|e| {
+            // Try to provide a diagnostic with the JSON source
+            let source = String::from_utf8_lossy(data);
+            let offset = e.column().saturating_sub(1);
+            let diag = crate::diagnostic::InvalidAnnotationJson {
+                src: miette::NamedSource::new("annotations.json", source.into_owned()),
+                span: (offset, 1).into(),
+                reason: e.to_string(),
+                advice: Some("check the JSON structure matches the W3C annotation format".into()),
+            };
+            anyhow::Error::new(diag)
+        })
     }
 
     /// Serialize to pretty JSON bytes.

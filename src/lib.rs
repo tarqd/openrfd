@@ -1,6 +1,7 @@
 pub mod annotation;
 pub mod build;
 pub mod config;
+pub mod diagnostic;
 pub mod import;
 pub mod index;
 pub mod refs;
