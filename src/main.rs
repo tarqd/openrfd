@@ -152,11 +152,14 @@ enum Commands {
         port: u16,
     },
 
-    /// Git post-commit hook — updates RFD metadata refs
+    /// Git pre-commit hook — enforces branch discipline
     ///
-    /// Wire this into `.git/hooks/post-commit`:
-    ///   #!/bin/sh
-    ///   rfd post-commit
+    /// On `rfd/NNNN` branches, only changes under `rfd/NNNN/` are allowed.
+    #[command(name = "pre-commit")]
+    PreCommit,
+
+    /// Git post-commit hook — updates RFD metadata refs
+    #[command(name = "post-commit")]
     PostCommit,
 
     /// Show or update configuration
@@ -244,6 +247,7 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
             };
             build::build_site(repo_root, config, filter)
         }
+        Commands::PreCommit => cmd_pre_commit(repo_root, config),
         Commands::PostCommit => cmd_post_commit(repo_root, config),
         Commands::Config { key, value } => cmd_config(repo_root, config, key, value),
         _ => Ok(()),
@@ -314,8 +318,12 @@ What other approaches were considered? Why were they not chosen?
     // Write default static assets
     write_default_static_assets(&cwd)?;
 
+    // Install git hooks (pre-commit + post-commit)
+    install_git_hooks(&cwd)?;
+
     eprintln!("Initialized RFD repository in {}", cwd.display());
     eprintln!("  Created rfd/, templates/, static/, and rfd.toml");
+    eprintln!("  Installed git hooks (pre-commit, post-commit)");
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. git add -A && git commit -m \"Initialize RFD repository\"");
@@ -379,6 +387,62 @@ fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
     eprintln!("  3. rfd discuss {}   # open a pull request", num);
 
     Ok(())
+}
+
+/// Git pre-commit hook: on `rfd/NNNN` branches, reject staged changes that
+/// touch files outside the corresponding `rfd/NNNN/` directory or that modify
+/// a different RFD.
+fn cmd_pre_commit(repo_root: &Path, config: &Config) -> Result<()> {
+    let branch = repo::current_branch(repo_root)?;
+
+    // Only enforce on rfd/* branches
+    let num = match parse_rfd_branch(&branch, config) {
+        Some(n) => n,
+        None => return Ok(()),
+    };
+
+    let padded = config.pad_number(num);
+    let allowed_prefix = format!("rfd/{}/", padded);
+
+    // Get staged files
+    let output = std::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .context("failed to list staged files")?;
+
+    let staged = String::from_utf8(output.stdout)?;
+    let mut violations: Vec<String> = Vec::new();
+
+    for file in staged.lines() {
+        let file = file.trim();
+        if file.is_empty() {
+            continue;
+        }
+        if !file.starts_with(&allowed_prefix) {
+            violations.push(file.to_string());
+        }
+    }
+
+    if violations.is_empty() {
+        return Ok(());
+    }
+
+    let mut msg = format!(
+        "branch `{}` should only contain changes under `{}`\n\n  \
+         The following staged files are outside that directory:\n",
+        branch, allowed_prefix
+    );
+    for v in &violations {
+        msg.push_str(&format!("    {}\n", v));
+    }
+    msg.push_str(
+        "\n  Unstage them with:\n    \
+         git reset HEAD <file>...\n\n  \
+         Or commit on the correct branch instead.",
+    );
+
+    anyhow::bail!("{}", msg);
 }
 
 /// Git post-commit hook: scan the last commit for changed RFD files and
@@ -1144,6 +1208,71 @@ fn cmd_config(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Parse an `rfd/NNNN` branch name into the RFD number.
+/// Returns `None` if the branch doesn't match the pattern.
+fn parse_rfd_branch(branch: &str, config: &Config) -> Option<u32> {
+    let rest = branch.strip_prefix("rfd/")?;
+    let num: u32 = rest.parse().ok()?;
+    // Sanity-check that it round-trips to the expected padded form
+    if rest != config.pad_number(num) {
+        return None;
+    }
+    Some(num)
+}
+
+/// Install pre-commit and post-commit hooks into `.git/hooks/`.
+/// Existing hooks are preserved by appending rather than overwriting.
+fn install_git_hooks(repo_root: &Path) -> Result<()> {
+    let hooks_dir = repo_root.join(".git/hooks");
+    if !hooks_dir.exists() {
+        std::fs::create_dir_all(&hooks_dir)?;
+    }
+
+    let hooks: &[(&str, &str)] = &[
+        (
+            "pre-commit",
+            "# rfd: enforce branch discipline on rfd/* branches\nrfd pre-commit\n",
+        ),
+        (
+            "post-commit",
+            "# rfd: update metadata refs for committed RFDs\nrfd post-commit\n",
+        ),
+    ];
+
+    for (name, snippet) in hooks {
+        let path = hooks_dir.join(name);
+
+        if path.exists() {
+            let existing = std::fs::read_to_string(&path)?;
+            if existing.contains("rfd pre-commit") || existing.contains("rfd post-commit") {
+                // Already installed
+                continue;
+            }
+            // Append to existing hook
+            let mut content = existing;
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push('\n');
+            content.push_str(snippet);
+            std::fs::write(&path, content)?;
+        } else {
+            let content = format!("#!/bin/sh\n{}", snippet);
+            std::fs::write(&path, content)?;
+        }
+
+        // Make executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o755);
+            std::fs::set_permissions(&path, perms)?;
+        }
+    }
+
+    Ok(())
+}
 
 fn colorize_state(state: &State) -> String {
     match state {
