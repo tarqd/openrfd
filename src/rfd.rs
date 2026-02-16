@@ -13,8 +13,6 @@ pub struct Frontmatter {
     pub authors: Option<String>,
     pub state: State,
     #[serde(default)]
-    pub discussion: Option<String>,
-    #[serde(default)]
     pub visibility: Option<Visibility>,
     #[serde(default)]
     pub labels: Vec<String>,
@@ -330,7 +328,6 @@ mod tests {
             frontmatter: Frontmatter {
                 authors: None,
                 state: State::Prediscussion,
-                discussion: None,
                 visibility: None,
                 labels: vec![],
             },

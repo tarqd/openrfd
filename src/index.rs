@@ -13,7 +13,7 @@ pub fn generate_csv_index(repo_root: &Path, config: &Config) -> Result<()> {
     let mut writer = csv::Writer::from_path(&csv_path)
         .with_context(|| format!("creating {}", csv_path.display()))?;
 
-    writer.write_record(["number", "title", "state", "authors", "discussion"])?;
+    writer.write_record(["number", "title", "state", "authors"])?;
 
     let mut entries: Vec<_> = std::fs::read_dir(&rfd_dir)?
         .filter_map(|e| e.ok())
@@ -45,7 +45,6 @@ pub fn generate_csv_index(repo_root: &Path, config: &Config) -> Result<()> {
             &rfd.title(),
             rfd.frontmatter.state.as_str(),
             rfd.frontmatter.authors.as_deref().unwrap_or(""),
-            rfd.frontmatter.discussion.as_deref().unwrap_or(""),
         ])?;
     }
 

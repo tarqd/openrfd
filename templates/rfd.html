@@ -9,7 +9,6 @@
     <div class="rfd-meta">
       <span class="state-badge state-{{ state }}">{{ state }}</span>
       {% if authors %}<span class="meta-item">Authors: {{ authors }}</span>{% endif %}
-      {% if discussion %}<span class="meta-item"><a href="{{ discussion }}">Discussion</a></span>{% endif %}
       {% for label in labels %}
       <span class="label-badge">{{ label }}</span>
       {% endfor %}
@@ -51,7 +50,6 @@
 <script>
   window.__RFD_NUMBER__ = "{{ number }}";
   window.__RFD_STATE__ = "{{ state }}";
-  window.__RFD_DISCUSSION__ = "{{ discussion }}";
   window.__ANNOTATIONS__ = {{ annotations_json | safe }};
   window.__GITHUB_CLIENT_ID__ = "{{ github_client_id }}";
 </script>

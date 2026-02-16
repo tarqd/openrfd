@@ -9,7 +9,6 @@ use crate::config::Config;
 use crate::diagnostic::ValidationDiagnostic;
 use crate::rfd::{find_rfd_file, Rfd};
 use crate::selector::check_selectors;
-use crate::state::State;
 
 /// Validation result for a single RFD.
 #[derive(Debug, Default)]
@@ -101,30 +100,6 @@ pub fn validate_rfd(path: &Path) -> ValidationResult {
             label: "expected a markdown heading (e.g. `# RFD 0001 My Title`)".into(),
             advice: Some(
                 "add a level-1 heading after the frontmatter:\n\n  # RFD NNNN Your Title"
-                    .into(),
-            ),
-        });
-    }
-
-    // If state is discussion, check for discussion link
-    if rfd.frontmatter.state == State::Discussion && rfd.frontmatter.discussion.is_none() {
-        result
-            .warnings
-            .push("state is 'discussion' but no discussion link set".into());
-
-        // Point at the state: line in frontmatter
-        let state_span = fm_content
-            .find("state:")
-            .map(|i| (i, "state: discussion".len()))
-            .unwrap_or((0, fm_end));
-        result.diagnostics.push(ValidationDiagnostic {
-            message: "state is 'discussion' but no discussion link set".into(),
-            src: NamedSource::new(&filename, content.clone()),
-            span: state_span.into(),
-            label: "state is discussion".into(),
-            advice: Some(
-                "add `discussion: https://github.com/...` to the frontmatter, \
-                 or run `rfd discuss <number>` to open a PR"
                     .into(),
             ),
         });
@@ -281,7 +256,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = write_rfd(
             dir.path(),
-            "---\nauthors: Alice\nstate: discussion\ndiscussion: https://github.com/example/pr/1\n---\n\n# RFD 0001 Test\n\nContent here.\n",
+            "---\nauthors: Alice\nstate: discussion\n---\n\n# RFD 0001 Test\n\nContent here.\n",
         );
         let result = validate_rfd(&path);
         assert!(result.is_ok());
@@ -322,16 +297,6 @@ mod tests {
         assert!(result.warnings.iter().any(|w| w.contains("title")));
     }
 
-    #[test]
-    fn test_validate_discussion_state_without_link_warns() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write_rfd(
-            dir.path(),
-            "---\nauthors: Bob\nstate: discussion\n---\n\n# RFD 0001 Test\n",
-        );
-        let result = validate_rfd(&path);
-        assert!(result.warnings.iter().any(|w| w.contains("discussion")));
-    }
 
     #[test]
     fn test_validate_nonexistent_file() {

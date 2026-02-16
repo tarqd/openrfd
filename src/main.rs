@@ -65,12 +65,10 @@ enum Commands {
         state: String,
     },
 
-    /// Move an RFD to discussion state and set its discussion link
+    /// Move an RFD to discussion state
     Discuss {
         /// RFD number
         number: u32,
-        /// Discussion link (e.g. mailing-list thread, forum post, PR URL)
-        link: Option<String>,
     },
 
     /// Publish an RFD (merge to main)
@@ -223,7 +221,7 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
         Commands::Show { number } => cmd_show(repo_root, config, number),
         Commands::Edit { number } => cmd_edit(repo_root, config, number),
         Commands::State { number, state } => cmd_state(repo_root, config, number, &state),
-        Commands::Discuss { number, link } => cmd_discuss(repo_root, config, number, link),
+        Commands::Discuss { number } => cmd_discuss(repo_root, config, number),
         Commands::Publish { number } => cmd_publish(repo_root, config, number),
         Commands::Search { query } => cmd_search(repo_root, config, &query),
         Commands::Validate { number } => cmd_validate(repo_root, config, number),
@@ -282,7 +280,6 @@ fn cmd_init() -> Result<()> {
         r#"---
 authors:
 state: prediscussion
-discussion:
 ---
 
 # RFD {number} {title}
@@ -372,7 +369,7 @@ fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
         std::fs::write(&file_path, content)?;
     } else {
         let content = format!(
-            "---\nauthors:\nstate: prediscussion\ndiscussion:\n---\n\n# RFD {} {}\n",
+            "---\nauthors:\nstate: prediscussion\n---\n\n# RFD {} {}\n",
             padded, title
         );
         std::fs::write(&file_path, content)?;
@@ -385,7 +382,7 @@ fn cmd_new(repo_root: &Path, config: &Config, title: &str) -> Result<()> {
     eprintln!("Next steps:");
     eprintln!("  1. Edit {}", file_path.display());
     eprintln!("  2. git add -A && git commit -m \"RFD {}: {}\"", padded, title);
-    eprintln!("  3. rfd discuss {} <link>   # move to discussion", num);
+    eprintln!("  3. rfd discuss {}   # move to discussion", num);
 
     Ok(())
 }
@@ -677,12 +674,7 @@ fn cmd_state(repo_root: &Path, config: &Config, number: u32, new_state: &str) ->
     Ok(())
 }
 
-fn cmd_discuss(
-    repo_root: &Path,
-    config: &Config,
-    number: u32,
-    link: Option<String>,
-) -> Result<()> {
+fn cmd_discuss(repo_root: &Path, config: &Config, number: u32) -> Result<()> {
     let padded = config.pad_number(number);
     let branch = config.branch_name(number);
 
@@ -703,38 +695,21 @@ fn cmd_discuss(
         .ok_or_else(|| anyhow::anyhow!("RFD {} not found on branch {}", number, branch))?;
 
     let rfd = Rfd::load(&file)?;
-    let mut changed = false;
 
-    // Update state to discussion
-    if rfd.frontmatter.state != State::Discussion {
-        Rfd::set_field(&file, "state", "discussion")?;
-        changed = true;
+    if rfd.frontmatter.state == State::Discussion {
+        eprintln!("RFD {} is already in discussion state", padded);
+        return Ok(());
     }
 
-    // Set discussion link if provided
-    if let Some(ref url) = link {
-        Rfd::set_field(&file, "discussion", url)?;
-        changed = true;
-    }
-
-    if changed {
-        let rel_path = file.strip_prefix(repo_root)?.to_string_lossy().to_string();
-        let msg = match &link {
-            Some(_) => format!("rfd: move RFD {} to discussion with link", padded),
-            None => format!("rfd: move RFD {} to discussion", padded),
-        };
-        repo::commit(repo_root, &[&rel_path], &msg)?;
-    }
+    Rfd::set_field(&file, "state", "discussion")?;
+    let rel_path = file.strip_prefix(repo_root)?.to_string_lossy().to_string();
+    repo::commit(
+        repo_root,
+        &[&rel_path],
+        &format!("rfd: move RFD {} to discussion", padded),
+    )?;
 
     eprintln!("RFD {} is now in discussion state", padded);
-    if let Some(url) = &link {
-        eprintln!("Discussion: {}", url);
-    } else if rfd.frontmatter.discussion.is_some() {
-        // Already had a link, we didn't touch it
-    } else {
-        eprintln!("Tip: set a discussion link with `rfd discuss {} <url>`", number);
-    }
-
     Ok(())
 }
 

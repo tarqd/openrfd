@@ -158,7 +158,6 @@ fn build_rfd_page(
     context.insert("title", &rfd.title());
     context.insert("state", &rfd.frontmatter.state.to_string());
     context.insert("authors", &rfd.frontmatter.authors.clone().unwrap_or_default());
-    context.insert("discussion", &rfd.frontmatter.discussion.clone().unwrap_or_default());
     context.insert("labels", &rfd.frontmatter.labels);
     context.insert("content", &rendered.html);
     context.insert("annotations_json", &annotations_json);

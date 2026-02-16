@@ -425,7 +425,7 @@ mod tests {
         write_commit(
             &repo,
             "refs/rfd/0001",
-            "State: discussion\n\nDiscussion: https://example.com/pr/1",
+            "State: discussion\n\nReviewer: alice",
             &[],
             &[],
         ).unwrap();
@@ -433,7 +433,7 @@ mod tests {
         let log = read_log(&repo, "refs/rfd/0001", 10).unwrap();
         assert_eq!(log.len(), 2);
         assert_eq!(log[0].footer("State"), Some("discussion".into()));
-        assert_eq!(log[0].footer("Discussion"), Some("https://example.com/pr/1".into()));
+        assert_eq!(log[0].footer("Reviewer"), Some("alice".into()));
         assert_eq!(log[1].footer("State"), Some("prediscussion".into()));
         assert_eq!(log[1].footer("Revision"), Some("1".into()));
     }
