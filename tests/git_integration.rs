@@ -54,7 +54,9 @@ fn make_annotation(rfd: u32, creator: &str, body: &str) -> Annotation {
                 suffix: None,
             }],
         }),
+        modified: None,
         resolved: None,
+        origin: None,
     }
 }
 

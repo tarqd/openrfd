@@ -126,6 +126,20 @@ enum Commands {
         pr: u32,
     },
 
+    /// Sync PR review comments into the annotation database
+    ///
+    /// Merges GitHub's current state with local annotations: new comments
+    /// are added, edited comments are updated, and local state (resolved)
+    /// is preserved. If --pr is omitted, discovers the PR automatically
+    /// from the rfd/NNNN branch.
+    Sync {
+        /// RFD number
+        number: u32,
+        /// PR number (auto-discovered from branch if omitted)
+        #[arg(long)]
+        pr: Option<u32>,
+    },
+
     /// Mark an annotation as resolved
     Resolve {
         /// RFD number
@@ -233,6 +247,7 @@ fn run_command(command: Commands, repo_root: &Path, config: &Config) -> Result<(
             cmd_annotations(repo_root, config, number, check, reanchor)
         }
         Commands::ImportAnnotations { number, pr } => cmd_import_annotations(repo_root, config, number, pr),
+        Commands::Sync { number, pr } => cmd_sync(repo_root, config, number, pr),
         Commands::Resolve { number, annotation_id } => {
             cmd_resolve(repo_root, config, number, &annotation_id)
         }
@@ -919,7 +934,9 @@ fn cmd_annotate(
                 },
             ],
         }),
+        modified: None,
         resolved: None,
+        origin: None,
     };
 
     // Store annotation on the RFD's custom ref (never touches working tree)
@@ -1016,8 +1033,36 @@ fn cmd_import_annotations(
     number: u32,
     pr: u32,
 ) -> Result<()> {
-    // import writes directly to the RFD's custom ref — no working tree changes
-    import::import_pr_annotations(repo_root, config, number, pr)?;
+    // Legacy one-shot import — prefer `rfd sync` for incremental updates.
+    // Delegates to sync so existing invocations get the merge behavior.
+    import::sync_pr_annotations(repo_root, config, number, pr)?;
+    Ok(())
+}
+
+fn cmd_sync(
+    repo_root: &Path,
+    config: &Config,
+    number: u32,
+    pr: Option<u32>,
+) -> Result<()> {
+    let pr_number = match pr {
+        Some(n) => n,
+        None => {
+            eprintln!("Discovering PR for RFD {}...", config.pad_number(number));
+            import::find_pr_for_rfd(repo_root, config, number)?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no open PR found with head branch {}\n\n  \
+                         Specify the PR number explicitly:\n    \
+                         rfd sync {} --pr <number>",
+                        config.branch_name(number),
+                        number
+                    )
+                })?
+        }
+    };
+
+    import::sync_pr_annotations(repo_root, config, number, pr_number)?;
     Ok(())
 }
 

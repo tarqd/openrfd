@@ -16,9 +16,16 @@ pub struct Annotation {
     pub motivation: Motivation,
     pub body: AnnotationBody,
     pub target: AnnotationTarget,
+    /// W3C `modified` — set when the annotation body is updated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<DateTime<Utc>>,
     /// If this annotation is resolved/closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved: Option<DateTime<Utc>>,
+    /// Provenance: links this annotation to an external source (e.g. GitHub comment ID).
+    /// Format: `github:<comment_id>` for PR review comments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// W3C AnnotationCollection — groups annotations by source.
@@ -167,6 +174,20 @@ impl Annotation {
     pub fn new_id(rfd_number: u32, pad_width: u32) -> String {
         let padded = format!("{:0>width$}", rfd_number, width = pad_width as usize);
         format!("urn:openrfd:{}:{}", padded, Uuid::new_v4())
+    }
+
+    /// Generate a stable annotation ID derived from a GitHub comment ID.
+    /// Format: `urn:openrfd:NNNN:gh-<comment_id>`.
+    pub fn github_id(rfd_number: u32, pad_width: u32, comment_id: u64) -> String {
+        let padded = format!("{:0>width$}", rfd_number, width = pad_width as usize);
+        format!("urn:openrfd:{}:gh-{}", padded, comment_id)
+    }
+
+    /// Returns true if this annotation was imported from GitHub.
+    pub fn is_from_github(&self) -> bool {
+        self.origin
+            .as_ref()
+            .map_or(false, |o| o.starts_with("github:"))
     }
 
     /// Check if this annotation is a reply to another.
@@ -342,7 +363,9 @@ mod tests {
                 format: default_format(),
             },
             target: AnnotationTarget::Reference("urn:openrfd:0001:parent".into()),
+            modified: None,
             resolved: None,
+            origin: None,
         };
         assert!(annotation.is_reply());
         assert_eq!(annotation.reply_to(), Some("urn:openrfd:0001:parent"));
@@ -373,7 +396,9 @@ mod tests {
                 state: None,
                 selector: vec![],
             }),
+            modified: None,
             resolved: None,
+            origin: None,
         };
         assert!(!annotation.is_reply());
         assert_eq!(annotation.reply_to(), None);
@@ -416,7 +441,9 @@ mod tests {
                     Selector::TextPositionSelector { start: 10, end: 19 },
                 ],
             }),
+            modified: None,
             resolved: None,
+            origin: None,
         });
 
         let bytes = collection.to_bytes().unwrap();
@@ -459,5 +486,128 @@ mod tests {
         assert_eq!(AnchorHealth::Approximate.to_string(), "approximate");
         assert_eq!(AnchorHealth::Stale.to_string(), "stale");
         assert_eq!(AnchorHealth::Orphaned.to_string(), "orphaned");
+    }
+
+    #[test]
+    fn test_github_id_format() {
+        let id = Annotation::github_id(42, 4, 987654);
+        assert_eq!(id, "urn:openrfd:0042:gh-987654");
+    }
+
+    #[test]
+    fn test_github_id_stable() {
+        let id1 = Annotation::github_id(42, 4, 100);
+        let id2 = Annotation::github_id(42, 4, 100);
+        assert_eq!(id1, id2, "same comment ID should produce same annotation ID");
+    }
+
+    #[test]
+    fn test_github_id_distinct() {
+        let id1 = Annotation::github_id(42, 4, 100);
+        let id2 = Annotation::github_id(42, 4, 101);
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_is_from_github() {
+        let ann = Annotation {
+            context: default_context(),
+            annotation_type: default_annotation_type(),
+            id: "urn:openrfd:0042:gh-100".into(),
+            creator: Creator {
+                creator_type: "Person".into(),
+                name: "alice".into(),
+                email: None,
+                url: None,
+            },
+            created: chrono::Utc::now(),
+            motivation: Motivation::Commenting,
+            body: AnnotationBody {
+                body_type: default_textual_body(),
+                value: "test".into(),
+                format: default_format(),
+            },
+            target: AnnotationTarget::Resource(SpecificResource {
+                resource_type: default_specific_resource(),
+                source: "rfd/0042/README.md".into(),
+                state: None,
+                selector: vec![],
+            }),
+            modified: None,
+            resolved: None,
+            origin: Some("github:100".into()),
+        };
+        assert!(ann.is_from_github());
+    }
+
+    #[test]
+    fn test_not_from_github() {
+        let ann = Annotation {
+            context: default_context(),
+            annotation_type: default_annotation_type(),
+            id: Annotation::new_id(1, 4),
+            creator: Creator {
+                creator_type: "Person".into(),
+                name: "bob".into(),
+                email: None,
+                url: None,
+            },
+            created: chrono::Utc::now(),
+            motivation: Motivation::Commenting,
+            body: AnnotationBody {
+                body_type: default_textual_body(),
+                value: "local".into(),
+                format: default_format(),
+            },
+            target: AnnotationTarget::Resource(SpecificResource {
+                resource_type: default_specific_resource(),
+                source: "rfd/0001/README.md".into(),
+                state: None,
+                selector: vec![],
+            }),
+            modified: None,
+            resolved: None,
+            origin: None,
+        };
+        assert!(!ann.is_from_github());
+    }
+
+    #[test]
+    fn test_modified_roundtrip() {
+        let now = chrono::Utc::now();
+        let mut collection = AnnotationCollection::new("Test Modified");
+        collection.items.push(Annotation {
+            context: default_context(),
+            annotation_type: default_annotation_type(),
+            id: "urn:openrfd:0042:gh-200".into(),
+            creator: Creator {
+                creator_type: "Person".into(),
+                name: "alice".into(),
+                email: None,
+                url: None,
+            },
+            created: now,
+            motivation: Motivation::Commenting,
+            body: AnnotationBody {
+                body_type: default_textual_body(),
+                value: "edited comment".into(),
+                format: default_format(),
+            },
+            target: AnnotationTarget::Resource(SpecificResource {
+                resource_type: default_specific_resource(),
+                source: "rfd/0042/README.md".into(),
+                state: None,
+                selector: vec![],
+            }),
+            modified: Some(now),
+            resolved: None,
+            origin: Some("github:200".into()),
+        });
+
+        let bytes = collection.to_bytes().unwrap();
+        let parsed = AnnotationCollection::from_bytes(&bytes).unwrap();
+
+        assert!(parsed.items[0].modified.is_some());
+        assert_eq!(parsed.items[0].origin.as_deref(), Some("github:200"));
     }
 }
