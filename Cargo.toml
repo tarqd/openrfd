@@ -1,0 +1,46 @@
+[package]
+name = "openrfd"
+version = "0.1.0"
+edition = "2021"
+description = "An open source system for managing Requests for Discussion"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/openrfd/openrfd"
+
+[lib]
+name = "openrfd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rfd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+tempfile = "3"
+axum = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+colored = "2"
+csv = "1"
+git2 = "0.19"
+glob = "0.3"
+markdown = "1"
+miette = { version = "7", features = ["fancy"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+similar = "2"
+tera = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+
+[dev-dependencies]
+
+[profile.release]
+lto = true
+strip = true

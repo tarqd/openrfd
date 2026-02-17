@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}RFD {{ number }} · {{ title }}{% endblock %}
+
+{% block content %}
+<div class="rfd-page">
+  <div class="rfd-header">
+    <h1>RFD {{ number }} · {{ title }}</h1>
+    <div class="rfd-meta">
+      <span class="state-badge state-{{ state }}">{{ state }}</span>
+      {% if authors %}<span class="meta-item">Authors: {{ authors }}</span>{% endif %}
+      {% for label in labels %}
+      <span class="label-badge">{{ label }}</span>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div id="revision-banner" class="banner" style="display:none;">
+    <span id="revision-text"></span>
+    <a id="revision-link" href="#">View on GitHub</a>
+  </div>
+
+  <div class="rfd-layout">
+    <article class="rfd-content" id="rfd-content">
+      {{ content | safe }}
+    </article>
+
+    <aside class="annotation-sidebar" id="annotation-sidebar">
+      <div class="sidebar-header">
+        <h3>Annotations <span id="annotation-count"></span></h3>
+        <button id="toggle-sidebar" class="btn btn-sm" title="Toggle sidebar">×</button>
+      </div>
+      <div id="annotation-list"></div>
+      <div id="pr-comments" style="display:none;">
+        <h4>PR Discussion</h4>
+        <div id="pr-comment-list"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div id="annotation-popover" class="popover" style="display:none;">
+  <textarea id="annotation-input" placeholder="Add a comment..." rows="3"></textarea>
+  <div class="popover-actions">
+    <button id="annotation-submit" class="btn btn-primary btn-sm">Add Annotation</button>
+    <button id="annotation-cancel" class="btn btn-sm">Cancel</button>
+  </div>
+</div>
+
+<script>
+  window.__RFD_NUMBER__ = "{{ number }}";
+  window.__RFD_STATE__ = "{{ state }}";
+  window.__ANNOTATIONS__ = {{ annotations_json | safe }};
+  window.__GITHUB_CLIENT_ID__ = "{{ github_client_id }}";
+</script>
+{% endblock %}
